@@ -48,6 +48,10 @@ Please report vulnerabilities privately through the repository's security adviso
 - Sign-ins, failed sign-ins, key, role, invite and account changes and deletions are written to an audit log that admins can
   read under **Site admin → Audit log**.
 - The database file and new data directories are created readable by the hub's user only.
+- In Docker the server never runs as root: the container starts as root only to hand over to the owner of
+  the data folder (or to the unprivileged `hub` user), then drops every privilege before the hub starts.
+- An admin created from `HUB_ADMIN_PASSWORD` has that password in the environment and in `.env`: change it
+  after the first sign-in and remove the setting.
 
 ## What it does not do
 

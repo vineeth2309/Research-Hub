@@ -40,7 +40,7 @@ can use it without a single agent.
 | **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing, and an MCP server for agents without a shell |
 | **Accounts and access** | Private projects, four roles, invite links, API keys, per-run tokens for training jobs, an audit log |
 | **System metrics** | Optional CPU, memory and GPU utilisation, memory, temperature and power |
-| **Simple to run** | One Python process, no dependencies beyond the standard library, one SQLite file. Docker and systemd files included |
+| **Simple to run** | One Python process, no dependencies beyond the standard library, one SQLite file. `docker compose up -d` works on any machine and restarts after a reboot |
 
 ![Plots tab: every chart is interactive and follows the light or dark theme](docs/images/plots.png)
 
@@ -76,8 +76,20 @@ python examples/01_quickstart.py   # a simulated run: no ML library and no GPU n
 **4. Open http://localhost:6230** and click the run.
 
 To let other machines reach the hub, start it with `hub serve --host 0.0.0.0` and read
-[docs/deploy.md](docs/deploy.md) first: it should sit behind HTTPS. With Docker: `docker compose up -d`, then
-`docker compose logs hub` shows the one-time link.
+[docs/deploy.md](docs/deploy.md) first: it should sit behind HTTPS.
+
+### Or with Docker
+
+```bash
+git clone https://github.com/vineeth2309/Research-Hub && cd Research-Hub
+docker compose up -d            # builds and starts the hub on http://localhost:6230
+docker compose logs hub         # the one-time link for creating the admin account
+```
+
+This is the way to run it for a team: it comes back by itself after a crash or a reboot. Settings go in a
+`.env` file (copy `.env.example`): the port, a data folder on the host, access from other machines, and
+optionally the admin account and a first project, so the hub is ready to sign in to without the setup link.
+See [docs/deploy.md](docs/deploy.md#docker).
 
 ## Log from your own code
 

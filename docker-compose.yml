@@ -1,14 +1,26 @@
-# docker compose up -d, then `docker compose logs hub` shows the one-time link for creating the admin account.
+# Research Hub with Docker Compose. Works as it is:
+#
+#   docker compose up -d            build and start; restarts by itself after a crash or a reboot
+#   docker compose logs hub         the one-time link for creating the admin account (first start only)
+#   docker compose up -d --build    after pulling a new version
+#
+# To change anything, copy .env.example to .env and edit it; this file does not need to be touched.
 services:
   hub:
     build: .
+    image: research-hub:local
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6230:6230"     # local only; put a TLS reverse proxy in front before exposing it (docs/deploy.md)
+      - "${HUB_BIND:-127.0.0.1}:${HUB_PORT:-6230}:6230"
     volumes:
-      - hub-data:/data
+      - "${HUB_DATA:-hub-data}:/data"
     environment:
-      HUB_PUBLIC_URL: http://localhost:6230
-      # HUB_TRUST_PROXY: "1"       # set when a reverse proxy terminates TLS in front of the hub
+      HUB_PUBLIC_URL: "${HUB_PUBLIC_URL:-http://localhost:6230}"
+      HUB_TRUST_PROXY: "${HUB_TRUST_PROXY:-}"
+      # first start only: create the admin account (and a first project) without opening the setup link
+      HUB_ADMIN_EMAIL: "${HUB_ADMIN_EMAIL:-}"
+      HUB_ADMIN_PASSWORD: "${HUB_ADMIN_PASSWORD:-}"
+      HUB_ADMIN_NAME: "${HUB_ADMIN_NAME:-}"
+      HUB_FIRST_PROJECT: "${HUB_FIRST_PROJECT:-}"
 volumes:
   hub-data:

@@ -21,6 +21,9 @@ http://localhost:6230. Choose another place or port with `hub serve --home /path
 To let other machines reach it, start it with `hub serve --host 0.0.0.0` and put it behind HTTPS first; see
 "Running the hub for a team".
 
+With Docker instead, in the cloned folder: `docker compose up -d`, then `docker compose logs hub` for the setup
+link. That keeps the hub running across reboots; "Running the hub for a team" has the settings.
+
 ## Create the first account
 
 The first time it starts, `hub serve` prints a one-time link:

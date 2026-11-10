@@ -488,10 +488,27 @@ def make_handler(api: Api, trust_proxy: bool = False):
     return Handler
 
 
+def bootstrap(store: Store) -> None:
+    """First start only: create the admin, and optionally a first project, from the environment, so a container
+    comes up ready without anyone opening the setup link. Does nothing once an admin exists."""
+    email, password = os.environ.get("HUB_ADMIN_EMAIL"), os.environ.get("HUB_ADMIN_PASSWORD")
+    if not (email and password and store.needs_setup()):
+        return
+    name = os.environ.get("HUB_ADMIN_NAME") or re.sub(r"[^a-z0-9_-]+", "-", email.split("@")[0].lower()).strip("-") or "admin"
+    store.create_admin(name, email, password)
+    print(f"[hub] created the admin account {name} ({email}) from HUB_ADMIN_EMAIL and HUB_ADMIN_PASSWORD", flush=True)
+    project = os.environ.get("HUB_FIRST_PROJECT")
+    if project:
+        store.create_project({"name": name, "kind": "human", "admin": True}, project, project.replace("-", " ").capitalize(),
+                             handbook=DEFAULT_HANDBOOK.read_text())
+        print(f"[hub] created the project {project}", flush=True)
+
+
 def serve(home, host="127.0.0.1", port=6230, public_url=None):
     """Run the hub. Behind a TLS proxy set HUB_TRUST_PROXY=1 so cookies are marked Secure and client IPs are read
     from X-Forwarded-For."""
     store = Store(home)
+    bootstrap(store)
     behind_proxy = os.environ.get("HUB_TRUST_PROXY", "") not in ("", "0")
     api = Api(store, secure_cookies=behind_proxy)
     httpd = ThreadingHTTPServer((host, port), make_handler(api, trust_proxy=behind_proxy))

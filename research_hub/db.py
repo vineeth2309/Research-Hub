@@ -133,7 +133,7 @@ class Database:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone()
-            conn.executescript(SCHEMA)
+            conn.executescript(f"BEGIN;{SCHEMA}COMMIT;")  # one transaction: one disk sync, not one per table
             if fresh:
                 conn.execute("INSERT INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
             self._migrate(conn)

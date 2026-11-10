@@ -37,13 +37,51 @@ instead run `hub serve --host 0.0.0.0` without TLS; anyone on that network can t
 
 ## Docker
 
+The repository's `docker-compose.yml` works unchanged on any machine with Docker:
+
 ```bash
-docker compose up -d
-docker compose logs hub          # the setup link
-docker compose exec hub hub admin create ada --email ada@example.org
+git clone https://github.com/vineeth2309/Research-Hub
+cd Research-Hub
+docker compose up -d            # builds the image and starts the hub on http://localhost:6230
+docker compose logs hub         # prints the one-time link for creating the admin account
 ```
 
-Data is in the `hub-data` volume. The container runs as an unprivileged user.
+It restarts by itself after a crash or a reboot (`restart: unless-stopped`; Docker itself must be set to start
+at boot, which is the default on most Linux installs). After pulling a new version: `docker compose up -d --build`.
+
+To change anything, copy `.env.example` to `.env` and edit it. `docker-compose.yml` stays as it is.
+
+| In `.env` | Meaning | Default |
+|---|---|---|
+| `HUB_BIND` | address on the host; `0.0.0.0` lets other machines connect | `127.0.0.1` |
+| `HUB_PORT` | port on the host | `6230` |
+| `HUB_PUBLIC_URL` | the address people type; used in printed links | `http://localhost:6230` |
+| `HUB_DATA` | a folder on the host for the data, instead of a Docker volume | the `hub-data` volume |
+| `HUB_TRUST_PROXY` | `1` when a reverse proxy terminates HTTPS in front | off |
+| `HUB_ADMIN_EMAIL`, `HUB_ADMIN_PASSWORD` | create the admin on the first start, with no setup link | not set |
+| `HUB_ADMIN_NAME` | that admin's username | from the email |
+| `HUB_FIRST_PROJECT` | also create a first project with this slug | not set |
+
+A team hub that other machines can reach, with its data in a folder you can back up, and ready to sign in to.
+Create the folder yourself first, so that it belongs to you, then put this in `.env`:
+
+```bash
+HUB_BIND=0.0.0.0
+HUB_PUBLIC_URL=http://hub.example.org:6230
+HUB_DATA=/srv/research_hub
+HUB_ADMIN_EMAIL=you@example.org
+HUB_ADMIN_PASSWORD=choose-at-least-10-characters
+HUB_FIRST_PROJECT=my-project
+```
+
+and run `docker compose up -d`.
+
+- The admin settings are read only while the hub has no admin. Change the password after signing in and
+  delete those lines from `.env`.
+- The hub runs as the owner of the data folder, so a folder you created needs no `chown`. With the default
+  volume it runs as the unprivileged `hub` user. The container starts as root only to make that choice.
+- `.env` is ignored by git. It can hold a password, so keep it readable by you only (`chmod 600 .env`).
+- Commands inside the container: `docker compose exec hub hub admin list`.
 
 ## systemd
 
@@ -58,6 +96,8 @@ Data is in the `hub-data` volume. The container runs as an unprivileged user.
 | `HUB_HOST`, `HUB_PORT` | listen address | `127.0.0.1`, `6230` |
 | `HUB_PUBLIC_URL` | address people use, for printed links | derived from host and port |
 | `HUB_TRUST_PROXY` | `1` behind a TLS reverse proxy | off |
+| `HUB_ADMIN_EMAIL`, `HUB_ADMIN_PASSWORD`, `HUB_ADMIN_NAME` | first start only: create the admin without the setup link | not set |
+| `HUB_FIRST_PROJECT` | first start only: also create a project with this slug | not set |
 | `HUB_ACCESS_LOG` | `1` to print every request | off |
 
 Sign-up mode (invitation only, admin approval, or open), who may create projects and the site name are under

@@ -9,3 +9,5 @@ web/node_modules/
 # hub data must never be committed
 hub.sqlite3*
 blobs/
+# local settings and credentials for docker compose
+.env

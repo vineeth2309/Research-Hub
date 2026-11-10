@@ -15,7 +15,7 @@ import pytest
 
 from research_hub import client as hubclient
 from research_hub.cli import main as cli
-from research_hub.server import Api, make_handler
+from research_hub.server import Api, bootstrap, make_handler
 from research_hub.store import Store
 
 PASSWORD = "correct horse battery"
@@ -183,6 +183,16 @@ def test_accounts_roles_and_access(tmp_path, site, monkeypatch, capsys):
     assert cli(["login", "--key", site.ada.token]) == 0 and "as ada" in capsys.readouterr().out
     assert cli(["--as", "ada", "agent", "create", "helper", "--projects", "research"]) == 0
     assert "HUB_TOKEN=hub_" in capsys.readouterr().out
+
+    # a container comes up ready: the first start creates the admin and a first project from the environment
+    fresh = Store(tmp_path / "container")
+    for key, value in (("HUB_ADMIN_EMAIL", "Grace.Hopper@example.org"), ("HUB_ADMIN_PASSWORD", PASSWORD), ("HUB_FIRST_PROJECT", "compilers")):
+        monkeypatch.setenv(key, value)
+    bootstrap(fresh)
+    bootstrap(fresh)  # only when no admin exists: the second start changes nothing
+    assert fresh.login("grace.hopper@example.org", PASSWORD, "", "")["name"] == "grace-hopper" and not fresh.needs_setup()
+    assert [p["slug"] for p in fresh.projects({"name": "grace-hopper", "kind": "human", "admin": True})] == ["compilers"]
+
 
 
 def _error(api, method, path, body):
