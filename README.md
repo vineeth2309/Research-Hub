@@ -146,8 +146,9 @@ The same guides are built into the dashboard under **Docs**, searchable, with th
 already filled into the commands.
 
 - [docs/getting-started.md](docs/getting-started.md): install, first account, first project, first run, inviting people, roles
-- [docs/logging.md](docs/logging.md): runs, metrics, plots, tables, per-sample results, system metrics, the CLI
-- [docs/agents.md](docs/agents.md): connecting agents, the handbook, reviews and research rules
+- [docs/logging.md](docs/logging.md): runs, metrics, plots, tables, the model architecture view, per-sample results,
+  system metrics, the CLI
+- [docs/agents.md](docs/agents.md): connecting agents, the MCP server, the handbook, reviews and research rules
 - [docs/deploy.md](docs/deploy.md): running it for a team: HTTPS, Docker, systemd, backups, upgrades
 - [docs/security.md](docs/security.md): how accounts, keys and access control work, and what is not covered yet
 
