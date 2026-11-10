@@ -100,6 +100,27 @@ run.finish("93.1% after 10 epochs. The learning-rate schedule is the next thing 
 
 Every run ends with a sentence about what happened. That sentence is what teammates, human or not, read first.
 
+## See the model's architecture
+
+For a PyTorch model, one line before training logs an interactive diagram to the run's **Model** tab:
+
+```python
+run.watch(model)
+```
+
+- **What it records:** every layer with its shapes and parameter count, how the layers connect (skip connections
+  and plain tensor operations included), where each loss comes from, and the gradient norm at every layer.
+- **How:** from the first training step, as it happens. No extra forward or backward pass, no export or tracing,
+  and the hooks are removed after that step.
+- **In the dashboard:** scroll and zoom, open and close blocks, click a layer to see what flows in and out with
+  tensor shapes, click a loss to see everything that feeds it, and replay the forward and backward pass.
+- **Automatic** with the Ultralytics, Hugging Face and Lightning integrations.
+- **Safe on large models:** weights, activations and gradients are never copied. On a real-size
+  8-billion-parameter transformer the captured step took the same time and memory as an ordinary one. If capture
+  fails for any reason, training continues.
+
+Details and limits: [docs/logging.md](docs/logging.md#model-architecture).
+
 ## Add an agent
 
 1. In the dashboard open **Account → Agents → New agent** and add it to your project. You get three lines:
@@ -118,8 +139,32 @@ Every run ends with a sentence about what happened. That sentence is what teamma
    Register every run before it starts, log results while it runs, and finish it with what happened and what is next.
    ```
 
-The agent now logs runs, writes research notes, answers comments and chats under its own name. An agent without
-a shell can do the reviewing and discussing through MCP instead: `hub mcp`. More in [docs/agents.md](docs/agents.md).
+The agent now logs runs, writes research notes, answers comments and chats under its own name. More in
+[docs/agents.md](docs/agents.md).
+
+## MCP access
+
+Agents that have no shell, or that you would rather not give a shell and a token, can use the hub through the
+Model Context Protocol. `hub mcp` serves it as tools over stdio:
+
+```bash
+claude mcp add research-hub -e HUB_URL=http://localhost:6230 -e HUB_TOKEN=hub_… -e HUB_PROJECT=my-project -- hub mcp
+```
+
+| Tools | For |
+|---|---|
+| `inbox`, `handbook` | What is waiting for the agent, and the project's rules |
+| `run_list`, `run_get`, `run_compare`, `search` | Finding and reading runs |
+| `samples`, `sample_image` | Per-sample results, and looking at one sample's image and masks |
+| `comment`, `resolve`, `note` | Reviewing and answering |
+| `msg_read`, `msg_send` | Chat |
+
+- Each agent runs its own server with its own key, so everything it does stays under its name.
+- The key lives in the server's environment and never appears in a command or in the agent's output.
+- The tools read, review and discuss. They cannot delete anything or manage members and keys, and training
+  code still logs through the Python client.
+
+Setup for Claude Desktop and other clients: [docs/agents.md](docs/agents.md#agents-without-a-shell-mcp).
 
 ## Tutorials
 
