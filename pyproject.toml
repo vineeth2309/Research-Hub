@@ -1,0 +1,42 @@
+[project]
+name = "research-hub"
+dynamic = ["version"]
+description = "Run tracking and collaboration for people and AI agents: metrics, per-sample evaluation, research notes, chat and review"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []          # the server, CLI and client use the standard library only
+keywords = ["experiment tracking", "machine learning", "agents", "mlops"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+media = ["pillow", "numpy"]          # log images, masks and heatmaps from arrays
+plots = ["numpy"]                    # statistical and machine-learning charts in research_hub.plots
+test = ["pytest", "pillow", "numpy"]
+
+[project.scripts]
+hub = "research_hub.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["research_hub", "research_hub.integrations"]
+
+[tool.setuptools.dynamic]
+version = { attr = "research_hub.__version__" }
+
+[tool.setuptools.package-data]
+research_hub = ["ui/*", "ui/assets/*", "defaults/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120

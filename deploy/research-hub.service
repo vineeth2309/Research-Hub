@@ -1,0 +1,13 @@
+# systemd user unit: cp deploy/research-hub.service ~/.config/systemd/user/ && systemctl --user enable --now research-hub
+[Unit]
+Description=Research Hub
+After=network-online.target
+
+[Service]
+Environment=HUB_HOME=%h/.research_hub
+ExecStart=/usr/bin/env hub serve --host 127.0.0.1 --port 6230
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

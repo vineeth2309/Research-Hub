@@ -1,0 +1,14 @@
+# docker compose up -d, then `docker compose logs hub` shows the one-time link for creating the admin account.
+services:
+  hub:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6230:6230"     # local only; put a TLS reverse proxy in front before exposing it (docs/deploy.md)
+    volumes:
+      - hub-data:/data
+    environment:
+      HUB_PUBLIC_URL: http://localhost:6230
+      # HUB_TRUST_PROXY: "1"       # set when a reverse proxy terminates TLS in front of the hub
+volumes:
+  hub-data:

@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 98%;
+    --foreground: 224 20% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 20% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 20% 12%;
+    --primary: 243 75% 58%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 220 16% 95%;
+    --muted-foreground: 222 12% 44%;
+    --accent: 243 80% 95%;
+    --accent-foreground: 243 60% 36%;
+    --border: 220 14% 90%;
+    --input: 220 14% 88%;
+    --ring: 243 75% 58%;
+    --success: 158 64% 32%;  --success-soft: 152 60% 94%;
+    --warning: 32 90% 36%;   --warning-soft: 42 95% 93%;
+    --danger: 0 72% 46%;     --danger-soft: 0 85% 95%;
+    --human: 270 60% 48%;    --human-soft: 270 70% 95%;
+    color-scheme: light;
+  }
+  .dark {
+    --background: 228 16% 7%;
+    --foreground: 220 14% 92%;
+    --card: 228 14% 10%;
+    --card-foreground: 220 14% 92%;
+    --popover: 228 14% 11%;
+    --popover-foreground: 220 14% 92%;
+    --primary: 240 85% 72%;
+    --primary-foreground: 228 16% 7%;
+    --muted: 228 12% 15%;
+    --muted-foreground: 220 10% 62%;
+    --accent: 240 40% 20%;
+    --accent-foreground: 240 90% 85%;
+    --border: 228 10% 17%;
+    --input: 228 10% 20%;
+    --ring: 240 85% 72%;
+    --success: 150 60% 60%;  --success-soft: 150 40% 14%;
+    --warning: 40 85% 62%;   --warning-soft: 38 50% 14%;
+    --danger: 0 80% 70%;     --danger-soft: 0 45% 16%;
+    --human: 270 70% 75%;    --human-soft: 270 35% 18%;
+    color-scheme: dark;
+  }
+  * { @apply border-border; }
+  html { font-feature-settings: "cv11", "ss01", "tnum"; -webkit-font-smoothing: antialiased; }
+  body { @apply bg-background text-foreground text-[13.5px] leading-relaxed; }
+  ::selection { background: hsl(var(--primary) / .25); }
+}
+
+@layer components {
+  .card { @apply rounded-lg border bg-card shadow-card; }
+  .label { @apply text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground; }
+  .mono { @apply font-mono text-[12.5px]; }
+  .focus-ring { @apply outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background; }
+  .prose-hub { @apply prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-headings:font-semibold prose-headings:tracking-tight prose-pre:bg-muted prose-pre:text-foreground prose-pre:text-[12.5px] prose-pre:leading-relaxed prose-code:before:content-none prose-code:after:content-none prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-normal prose-table:text-[12.5px] prose-a:text-primary prose-a:no-underline hover:prose-a:underline; }
+  .prose-hub table { @apply block overflow-x-auto; }
+}
+
+.u-legend { display: none; }
+.uplot, .uplot * { box-sizing: border-box; }
+.uplot .u-cursor-x { border-right: 1px dashed hsl(var(--muted-foreground) / .5) !important; }
+.uplot .u-cursor-y { display: none; }
+
+/* Observable Plot figures (components/PlotView.tsx): legends and tips in the dashboard's type. */
+.plot-host figure { margin: 0; max-width: 100%; }
+.plot-host figure > div { font: 500 11.5px/1.4 inherit; font-family: inherit; color: hsl(var(--muted-foreground)); margin-left: 8px; min-height: 0; }
+.plot-host svg { max-width: 100%; height: auto; }
+.plot-host [aria-label="tip"] { color: hsl(var(--foreground)); }

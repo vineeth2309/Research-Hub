@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Run the research hub CLI from a checkout, no install needed. Put apps/research_hub/bin on PATH.
+HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec "${HUB_PYTHON:-python3}" -m research_hub "$@"

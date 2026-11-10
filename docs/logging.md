@@ -1,0 +1,185 @@
+# Logging runs
+
+Everything here works the same for a person's training script and for an AI agent. Set three environment
+variables (or run `hub login` once and set only the project):
+
+```bash
+export HUB_URL=http://localhost:6230 HUB_TOKEN=hub_… HUB_PROJECT=my-project
+```
+
+## Python
+
+```python
+from research_hub import hub
+
+run = hub.init(
+    "resnet18-baseline",                 # optional; default is <script name>-<timestamp>. Names are never reused
+    title="ResNet18 baseline",
+    config={"lr": 1e-3, "epochs": 10},   # a dict, or the path of a config file committed to git
+    dataset="cifar10@1.0",               # name@version; comma-separate several
+    parent="earlier-run",                # the run this one is compared against
+    pinned=["val/accuracy"],             # charts shown on the run's overview
+)
+run.log({"train/loss": 0.41, "val": {"accuracy": 0.71}}, step=1000, epoch=2)   # nested dicts become a/b keys
+run.log_images(["worst.png"], step=1000, sample="img-0412", role="failure", caption="missed a small object")
+run.log_file("report.csv")
+run.log_eval(rows, step=1000, epoch=2, eval_set="cifar10@1.0:test")            # per-sample results, see below
+run.note("resumed from last.ckpt")
+run.summary({"val/accuracy": 0.93, "val/loss": {"value": 0.21, "direction": "min"}})   # fills the runs table
+run.finish("93% after 10 epochs. Next: cosine schedule.")                     # or run.fail("OOM at step 200")
+```
+
+Numbers can be Python floats, numpy scalars or 0-d tensors. If the hub is unreachable, metric and note calls
+are saved to `~/.cache/research_hub/spool` and replayed on the next call, so an outage never stops training.
+
+A job that should only be able to write to one run can use that run's **ingest token** instead of your key:
+
+```python
+run = hub.init(...)                       # where you launch the job
+env = {"HUB_URL": run.hub.url, "HUB_RUN": run.slug, "HUB_TOKEN": run.ingest_token}
+# inside the job:
+run = hub.init(resume=True)
+```
+
+## Plots and tables
+
+Build a chart with `research_hub.plots` and log it. The hub stores the data, not a picture, so the run's
+**Plots** tab draws it in the dashboard's theme, shows values on hover, and puts the same chart from several
+runs side by side on the compare page.
+
+```python
+from research_hub import plots
+
+run.log_chart("eval/roc", plots.roc_curve(y_true, y_score))               # 1-D scores, or 2-D for one curve per class
+run.log_chart("eval/confusion", plots.confusion_matrix(y_true, y_pred, normalize="true"))
+run.log_chart("sweep", plots.scatter(df, x="lr", y="val_acc", color="optimizer"))   # a DataFrame and column names
+run.log_chart("data/lengths", plots.histogram(value=lengths, bins=40))              # or arrays
+run.log_table("eval/worst", df.nlargest(50, "loss"))                      # sortable table
+run.log_histogram("weights/head", model.head.weight, step=step)           # logged per step: a slider and an over-time view
+run.log_figure("custom", matplotlib_figure)                               # anything else, as a static picture
+```
+
+Every builder takes lists, NumPy arrays, pandas or polars columns, and torch or TensorFlow tensors. Data is a
+DataFrame, a dict of columns or a list of dicts with channels given as column names; or leave it out and pass
+arrays. NaN and infinities become gaps. A chart name works like a metric key: `eval/roc` is grouped under
+`eval/`. Logging the same name at a new `step` adds a version; without a step it replaces the previous one.
+
+| Kind | Builders |
+|---|---|
+| General | `line`, `area`, `scatter`, `bar` (grouped, stacked, horizontal, error bars), `pie`, `heatmap`, `table` |
+| Distributions | `histogram` (overlaid groups, density, cumulative), `box`, `violin` |
+| Classification | `confusion_matrix`, `roc_curve`, `pr_curve`, `calibration`, `threshold_sweep`, `cumulative_gain`, `class_distribution`, `per_class_metrics` |
+| Regression | `predicted_vs_actual`, `residuals`, `error_histogram` |
+| Models and data | `feature_importance`, `learning_curve`, `embedding` (PCA to two dimensions) |
+
+The general builders need only the standard library; the rest need NumPy. Charts with axes accept `xlabel`,
+`ylabel`, `xlog`, `ylog`, `xdomain`, `ydomain` and `refs` (reference lines). A chart holds at most 50,000 rows;
+scatter and line charts are thinned to 20,000 points and say so, and histograms are binned before upload, so
+the size of your data does not matter. `examples/07_plots_gallery.py` logs one of everything.
+
+For a fitted scikit-learn style estimator (including XGBoost, LightGBM and pipelines), one call logs the lot:
+
+```python
+from research_hub.integrations.sklearn import log_classifier, log_regressor
+log_classifier(run, model, X_test, y_test)   # confusion matrix, ROC, PR, calibration, per-class scores, importances
+log_regressor(run, model, X_test, y_test)    # predicted vs actual, residuals, error distribution
+```
+
+## System metrics
+
+Off by default. Turn on background sampling of the machine with an argument or, without touching the script,
+an environment variable:
+
+```python
+run = hub.init(..., system=True)                               # CPU, memory, GPU, CPU temperature every 15 s
+run = hub.init(..., system=["gpu", "cpu"], system_interval=5)  # pick parts and the interval
+```
+
+```bash
+HUB_SYSTEM=1 python train.py            # or HUB_SYSTEM=gpu,cpu  and  HUB_SYSTEM_INTERVAL=5
+```
+
+| Part | Metrics under `system/` |
+|---|---|
+| `cpu` | `cpu_percent` |
+| `memory` | `memory_percent`, `process_memory_gb` |
+| `gpu` | per GPU `gpu0/utilization_percent`, `memory_gb`, `memory_percent`, `temperature_c`, `power_w` |
+| `temperature` | `cpu_temperature_c` |
+
+They appear on the Metrics tab in their own groups, with seconds since the run started on the x axis. GPU
+readings come from `nvidia-smi` and cover the GPUs in `CUDA_VISIBLE_DEVICES` (all of them when it is unset).
+On Linux nothing extra is needed; on macOS and Windows CPU and memory need `psutil`. Parts a machine does not
+expose are skipped. Sampling runs in a daemon thread, is never spooled, and stops at `run.finish()`.
+
+## Per-sample results
+
+One row per evaluated sample, at every checkpoint you evaluate. Send what your task produces; the hub derives
+an outcome (correct, missed, false alarm, wrong class, mismatch) and the dashboard builds filters, a confusion
+matrix and a per-sample timeline from it.
+
+```python
+row = {
+    "sample": "img-0412",                          # a stable id: the same sample across checkpoints and runs
+    "facts": {"camera": "c2", "site": "north"},    # any key=value; each becomes a filter. Stored once per sample
+    "image": "crops/0412.png",                     # path, bytes or numpy array; stored once per sample
+    "true": {"class": "cat",                       # classification
+             "value": 4.0,                         # regression
+             "masks": {"object": gt_mask},         # segmentation: binary HxW array or image path
+             "boxes": [[x, y, w, h, "cat"]],       # detection, in pixels of the image
+             "text": "a cat on a sofa"},           # captioning, OCR, VLM answers
+    "pred": {"class": "dog", "score": 0.93, "value": 3.2,
+             "masks": {"object": prob_map},        # raw 0..1 maps: the viewer applies threshold and opacity
+             "heatmaps": {"attention": att_map},   # drawn with a colour ramp
+             "boxes": [[x, y, w, h, "cat", 0.81]],
+             "text": "a dog on a sofa"},
+    "error": 1.4,                                  # optional; larger = worse. Sorts the grid
+    "metrics": {"iou": 0.71},                      # optional per-sample numbers
+}
+run.log_eval([row, ...], step=1000, epoch=2, eval_set="pets@2.0:val", negatives=["background"])
+```
+
+- Send only the keys your task has. A classifier sends `class`; a detector sends `boxes`.
+- `negatives` names the classes that mean "nothing here" (default: negative, background, normal, none, ok, good,
+  healthy). Predicting one of them for a positive sample is a *miss*; the reverse is a *false alarm*.
+- Images are stored as WebP (longest side 512 px), prediction maps as 8-bit PNG (192 px), ground-truth masks as
+  1-bit PNG. Uploads are content-addressed: an image sent again costs nothing.
+- Logging the same sample at a later step adds a checkpoint to its timeline. Logging it again at the same step
+  overwrites only the fields you send.
+- Do not draw masks, boxes or captions into the image yourself. Send them as data and the viewer overlays them.
+
+From a file: `hub run eval <run> results.jsonl --set pets@2.0:val --step 1000` (one JSON row per line; paths
+are relative to the file).
+
+## Command line
+
+```bash
+hub run start my-run --title "…" --dataset cifar10@1.0 --config configs/a.yaml   # records branch and commit
+hub run metric my-run --step 100 train/loss=0.41 val/accuracy=0.71
+hub run artifact my-run plot.png --step 100 --caption "loss curve"
+hub run note my-run --body "paused, resuming tomorrow"
+hub run summary my-run val/accuracy=0.93:max val/loss=0.21:min
+hub run finish my-run --conclusion "…" [--verdict supports|refutes|inconclusive]
+
+hub run delete my-run                                  # a person only; asks for the name (agents abandon runs)
+
+hub run list --status running
+hub run table --columns val/accuracy,val/loss --sort val/accuracy
+hub run compare run-a run-b
+hub run samples my-run --set pets@2.0:val --fact camera=c2 --outcome missed
+hub run samples my-run --set pets@2.0:val --vs other-run --vs-outcome correct     # what the other run got right
+```
+
+`hub --help` lists everything; `--project <slug>` overrides `HUB_PROJECT`; `--as <name>` picks one of several
+saved identities.
+
+## Framework integrations
+
+```python
+from research_hub.integrations.ultralytics import attach          # run = attach(model, title=…); model.train(…)
+from research_hub.integrations.transformers import HubCallback    # Trainer(callbacks=[HubCallback(title=…)])
+from research_hub.integrations.lightning import HubLogger         # Trainer(logger=HubLogger(title=…))
+from research_hub.integrations.sklearn import log_classifier      # log_classifier(run, model, X_test, y_test)
+```
+
+The first three take the same arguments as `hub.init`, log metrics and the training configuration, and leave
+`run.finish("…")` to you, because a conclusion is something only you can write.
