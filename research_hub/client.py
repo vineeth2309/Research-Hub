@@ -33,7 +33,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import plots, system as sysmetrics
+from . import plots
+from . import system as sysmetrics
 
 DEFAULT_URL = "http://localhost:6230"
 CRED_PATH = Path(os.environ.get("HUB_CREDENTIALS", "~/.config/research_hub/credentials.json")).expanduser()
@@ -194,7 +195,7 @@ def _flatten(metrics: dict, prefix="") -> dict:
 def init(name: str | None = None, *, project: str | None = None, title: str | None = None, config=None,
          category: str | None = None, parent: str | None = None, dataset: str | None = None, resume: bool = False,
          hub: Hub | None = None, allow_unpushed: bool = False, system=None, system_interval: float | None = None,
-         **fields) -> "Run":
+         **fields) -> Run:
     """Register a run and return a Run to log to. Like ``wandb.init``.
 
     ``config`` is a dict (stored as the config snapshot) or a path to a committed config file (git provenance is
@@ -378,7 +379,7 @@ class Run:
 # ------------------------------------------------------------------ eval upload
 def _pil():
     try:
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
         return Image
     except ImportError:
         return None
@@ -391,7 +392,7 @@ def encode_layer(src, kind: str) -> bytes:
     'mask': a binary ground-truth mask as 1-bit PNG, max 512 px. 'raw': bytes sent unchanged (audio, files).
     ``src`` is a path, bytes, or a numpy array (HxW for map/mask, HxWx3 for image; floats in 0..1 or uint8).
     """
-    Image = _pil()  # noqa: N806
+    Image = _pil()
     if kind == "raw" or Image is None:
         if isinstance(src, (bytes, bytearray)):
             return bytes(src)
@@ -403,7 +404,7 @@ def encode_layer(src, kind: str) -> bytes:
     elif isinstance(src, (bytes, bytearray)):
         img = Image.open(io.BytesIO(src))
     else:
-        import numpy as np  # noqa: PLC0415
+        import numpy as np
         arr = np.asarray(src)
         if arr.dtype != np.uint8:
             arr = (np.clip(arr.astype("float32"), 0, 1) * 255).round().astype(np.uint8)

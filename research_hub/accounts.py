@@ -10,8 +10,21 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from .core import (NAME, ROLES, Conflict, Forbidden, HubError, NotFound, Unauthorized, choice, hash_token, now, rank,
-                   rows, text)
+from .core import (
+    NAME,
+    ROLES,
+    Conflict,
+    Forbidden,
+    HubError,
+    NotFound,
+    Unauthorized,
+    choice,
+    hash_token,
+    now,
+    rank,
+    rows,
+    text,
+)
 
 SIGNUP_MODES = ("invite", "approval", "open")
 EMAIL = re.compile(r"[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}")

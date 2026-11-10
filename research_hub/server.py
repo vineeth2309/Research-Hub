@@ -106,7 +106,7 @@ class Api:
         self.login_limit = Limiter(8, 15 * 60)
         self.signup_limit = Limiter(10, 60 * 60)
         s = store
-        R = self._route  # noqa: N806
+        R = self._route
         self.routes = [
             # ---- no sign-in needed
             R("GET", "/api/health", lambda c: {"ok": True, "time": now(), "version": __version__}, "public"),
@@ -434,7 +434,7 @@ def make_handler(api: Api, trust_proxy: bool = False):
                 self._send(e.status, {"error": str(e), "kind": type(e).__name__})
             except (json.JSONDecodeError, UnicodeDecodeError):
                 self._send(400, {"error": "body is not valid JSON"})
-            except Exception as e:  # noqa: BLE001 - report, keep serving
+            except Exception as e:
                 print(f"[hub] {method} {url.path} failed: {e!r}", file=sys.stderr)
                 self._send(500, {"error": "internal error; see the server log"})
 

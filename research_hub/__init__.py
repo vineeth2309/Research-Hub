@@ -6,7 +6,7 @@
 
 __version__ = "0.1.0"
 
-from . import client as hub  # noqa: E402,F401  (``hub.init``, ``hub.Run``, ``hub.Hub``)
-from . import plots  # noqa: E402,F401  (chart builders for ``run.log_chart``)
+from . import client as hub
+from . import plots
 
 __all__ = ["hub", "plots", "__version__"]

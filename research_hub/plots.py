@@ -27,7 +27,7 @@ CURVE_POINTS = 300    # points kept per ROC / precision-recall curve
 # ----------------------------------------------------------------- any array -> columns
 def _np():
     try:
-        import numpy as np  # noqa: PLC0415
+        import numpy as np
         return np
     except ImportError:
         raise RuntimeError("this chart needs numpy (pip install numpy)") from None
@@ -234,7 +234,7 @@ def _groups(np, data, value, by):
     return [(g, arr[keep & (labels == g)]) for g in dict.fromkeys(labels.tolist())], name
 
 
-def histogram(data=None, *, value, by=None, bins=30, range=None, density=False, cumulative=False, title="",  # noqa: A002
+def histogram(data=None, *, value, by=None, bins=30, range=None, density=False, cumulative=False, title="",
               **options) -> dict:
     """Distribution of ``value``, binned here so any amount of data is cheap to send.
 

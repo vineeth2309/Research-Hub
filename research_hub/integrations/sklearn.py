@@ -14,7 +14,7 @@ import numpy as np
 from .. import plots
 
 
-def _importance(run, model, X, prefix, step):  # noqa: N803
+def _importance(run, model, X, prefix, step):
     final = model.steps[-1][1] if hasattr(model, "steps") else model  # a Pipeline's last step
     values = getattr(final, "feature_importances_", None)
     if values is None and getattr(final, "coef_", None) is not None:
@@ -29,7 +29,7 @@ def _importance(run, model, X, prefix, step):  # noqa: N803
     run.log_chart(f"{prefix}/feature_importance", plots.feature_importance(names, values), step)
 
 
-def log_classifier(run, model, X, y, *, labels=None, prefix="eval", step=None) -> dict:  # noqa: N803
+def log_classifier(run, model, X, y, *, labels=None, prefix="eval", step=None) -> dict:
     """Log a fitted classifier's charts and summary scores on held-out data; returns the summary values."""
     y = np.asarray(y)
     pred = model.predict(X)
@@ -59,7 +59,7 @@ def log_classifier(run, model, X, y, *, labels=None, prefix="eval", step=None) -
     return summary
 
 
-def log_regressor(run, model, X, y, *, prefix="eval", step=None) -> dict:  # noqa: N803
+def log_regressor(run, model, X, y, *, prefix="eval", step=None) -> dict:
     """Log a fitted regressor's charts and summary errors on held-out data; returns the summary values."""
     y = np.asarray(y, dtype=float)
     pred = np.asarray(model.predict(X), dtype=float)

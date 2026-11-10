@@ -20,7 +20,7 @@ STRICT = dict(category="ablation", summary="s", hypothesis="h", rationale="r", e
 
 
 def png() -> bytes:
-    Image = pytest.importorskip("PIL.Image")  # noqa: N806
+    Image = pytest.importorskip("PIL.Image")
     buf = io.BytesIO()
     Image.new("RGB", (8, 8), (100, 100, 100)).save(buf, "PNG")
     return buf.getvalue()
@@ -59,8 +59,8 @@ class Site:
             except urllib.error.HTTPError as e:
                 return e.code, json.loads(e.read()), e.headers
         status, body, headers = call("POST", "/api/auth/login", {"email": email, "password": password})
-        cookie = (headers.get("Set-Cookie") or "").split(";")[0]
-        return status, body, lambda method, path, data=None, csrf=body.get("csrf"): call(method, path, data, cookie, csrf)[:2]
+        cookie, token = (headers.get("Set-Cookie") or "").split(";")[0], body.get("csrf")
+        return status, body, lambda method, path, data=None, csrf=token: call(method, path, data, cookie, csrf)[:2]
 
 
 @pytest.fixture
@@ -184,7 +184,7 @@ def test_accounts_roles_and_access(tmp_path, site, monkeypatch, capsys):
 def _error(api, method, path, body):
     try:
         api.dispatch(method, path, {}, body, {})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return str(e)
     return ""
 
@@ -238,7 +238,7 @@ def test_plain_tracking_and_research_rules(site, capsys):
 
 def test_eval_samples_for_every_task_type(site, tmp_path):
     np = pytest.importorskip("numpy")
-    Image = pytest.importorskip("PIL.Image")  # noqa: N806
+    Image = pytest.importorskip("PIL.Image")
     hub = site.agent("agent-e")
     run = hubclient.init("multi", project="research", title="multi", **STRICT, hub=hub)
     img = np.full((64, 64, 3), 0.4, dtype=np.float32)
@@ -305,8 +305,8 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
 
 def test_plots_tables_and_system_metrics(site, monkeypatch):
     np = pytest.importorskip("numpy")
-    from research_hub import plots  # noqa: PLC0415
-    from research_hub.integrations.sklearn import log_classifier  # noqa: PLC0415
+    from research_hub import plots
+    from research_hub.integrations.sklearn import log_classifier
 
     site.agent("agent-a", project="detectors")
     monkeypatch.setenv("HUB_AGENT", "agent-a")
@@ -383,7 +383,7 @@ def test_plots_tables_and_system_metrics(site, monkeypatch):
 
 def test_deleting_runs_and_projects(site, monkeypatch, capsys):
     np = pytest.importorskip("numpy")
-    from research_hub import plots  # noqa: PLC0415
+    from research_hub import plots
 
     agent = site.agent("agent-a", project="detectors")
     monkeypatch.setenv("HUB_AGENT", "agent-a")
