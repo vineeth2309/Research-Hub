@@ -47,7 +47,8 @@ docker compose logs hub         # prints the one-time link for creating the admi
 ```
 
 It restarts by itself after a crash or a reboot (`restart: unless-stopped`; Docker itself must be set to start
-at boot, which is the default on most Linux installs). After pulling a new version: `docker compose up -d --build`.
+at boot, which is the default on most Linux installs). After pulling a new version:
+`docker compose build && docker compose up -d` (two steps, so the restart always uses the image just built).
 
 To change anything, copy `.env.example` to `.env` and edit it. `docker-compose.yml` stays as it is.
 
