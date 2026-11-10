@@ -15,17 +15,20 @@ from .. import client as hub
 from . import metric_key, plain
 
 
-def attach(model, run: hub.Run | None = None, **init) -> hub.Run:
+def attach(model, run: hub.Run | None = None, watch: bool = True, **init) -> hub.Run:
     """Register callbacks on ``model`` that log to ``run`` (created with ``hub.init(**init)`` when not given).
 
     Logged per epoch: ``train/<loss>``, ``lr/<group>`` and the validation metrics (``metrics/mAP50_B``, …).
     When training ends the final validation metrics become the run's summary and the training arguments its
-    config. Finish the run yourself, with a conclusion.
+    config. The model's architecture is captured from the first training step (``watch=False`` turns that off).
+    Finish the run yourself, with a conclusion.
     """
     run = run or hub.init(**init)
 
     def on_train_start(trainer):
         run.set_config(plain(vars(trainer.args)))
+        if watch:
+            run.watch(getattr(trainer.model, "module", trainer.model))  # unwrap DataParallel
 
     def on_fit_epoch_end(trainer):
         metrics = {metric_key(k): v for k, v in trainer.label_loss_items(trainer.tloss, prefix="train").items()}

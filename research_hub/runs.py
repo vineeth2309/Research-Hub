@@ -221,8 +221,8 @@ class Runs:
         for comment in comments:
             conn.execute("DELETE FROM comments WHERE id=?", (comment,))
             conn.execute("DELETE FROM search WHERE ref=?", (f"comment:{comment}",))
-        for table in ("run_topics", "run_notes", "metrics", "run_summary", "artifacts", "charts", "eval_results",
-                      "eval_layers"):
+        for table in ("run_topics", "run_notes", "metrics", "run_summary", "artifacts", "charts", "model_graphs",
+                      "eval_results", "eval_layers"):
             conn.execute(f"DELETE FROM {table} WHERE run=?", (run_slug,))
         conn.execute("DELETE FROM links WHERE src=? OR dst=?", (ref, ref))
         conn.execute("DELETE FROM search WHERE ref=?", (ref,))
@@ -339,6 +339,8 @@ class Runs:
                             (run_slug,)).fetchone()[0]  # system metrics count seconds, not training steps
         run["last_step"] = last
         run["charts"] = conn.execute("SELECT COUNT(DISTINCT name) FROM charts WHERE run=?", (run_slug,)).fetchone()[0]
+        run["model_graphs"] = rows(conn.execute("SELECT name, n_nodes, params FROM model_graphs WHERE run=? ORDER BY name",
+                                                (run_slug,)))
         run["artifacts"] = rows(conn.execute(
             "SELECT id,step,epoch,sample,role,kind,name,caption,blob_sha,mime,created FROM artifacts WHERE run=? "
             "ORDER BY step, id", (run_slug,)))

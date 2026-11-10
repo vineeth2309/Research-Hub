@@ -9,13 +9,14 @@ import { Expandable, Facts, Pager, Table, Td, Th } from "@/components/ui/data";
 import { DeleteDialog } from "@/components/ui/form";
 import { toast } from "@/components/ui/overlays";
 import { Badge, Button, Card, CardHeader, Empty, Input, Section, Stat, Tag, Who, statusTone, verdictTone } from "@/components/ui/primitives";
-import { api, get, refHref, type Artifact, type Metrics, type Run } from "@/lib/api";
+import { api, get, refHref, type Artifact, type Metrics, type ModelGraphData, type Run } from "@/lib/api";
 import { useHub } from "@/lib/state";
 import { ago, cn, duration, fmt, hashColor, pref, setPref, when } from "@/lib/utils";
 import { Plots } from "./Plots";
 import { Samples } from "./Samples";
 
-const TABS = ["overview", "charts", "plots", "samples", "visuals", "files", "discussion"] as const;
+const TABS = ["overview", "charts", "plots", "model", "samples", "visuals", "files", "discussion"] as const;
+const ModelGraph = React.lazy(() => import("@/components/ModelGraph"));
 const TAB_LABEL: Partial<Record<(typeof TABS)[number], string>> = { charts: "Metrics" };
 const AUX = (k: string) => /(^|\/)(lr|grad_norm|elapsed_seconds|validation_seconds|preview_export_seconds|count|.*_count|epoch|batch|has_.*|.*_parameters|.*_bytes)$/.test(k);
 
@@ -73,7 +74,7 @@ export default function RunPage() {
       <DeleteDialog open={deleting} onOpenChange={setDeleting} what="run" name={r.slug} onDelete={remove}>
         This removes <b className="font-semibold">{r.title}</b> with its metrics, plots, per-sample results, images, notes and comments.{r.children.length > 0 && ` ${r.children.length} run${r.children.length === 1 ? "" : "s"} that name it as parent will lose that link.`}
       </DeleteDialog>
-      {tab === "charts" ? <Charts r={r} metrics={m} parent={pm} /> : tab === "plots" ? <Plots run={r} /> : tab === "samples" ? <Samples run={r} /> : tab === "visuals" ? <Visuals r={r} imgs={imgs} /> : tab === "files" ? <Files r={r} files={files} /> : tab === "discussion" ? <Card className="p-4"><CommentThread comments={r.comments} target={`run:${r.slug}`} owner={r.owner} initialAnchor={sessionStorage.getItem("hub.anchor") ?? undefined} /></Card> : <Overview r={r} metrics={m} parent={pm} />}
+      {tab === "charts" ? <Charts r={r} metrics={m} parent={pm} /> : tab === "plots" ? <Plots run={r} /> : tab === "model" ? <Model r={r} /> : tab === "samples" ? <Samples run={r} /> : tab === "visuals" ? <Visuals r={r} imgs={imgs} /> : tab === "files" ? <Files r={r} files={files} /> : tab === "discussion" ? <Card className="p-4"><CommentThread comments={r.comments} target={`run:${r.slug}`} owner={r.owner} initialAnchor={sessionStorage.getItem("hub.anchor") ?? undefined} /></Card> : <Overview r={r} metrics={m} parent={pm} />}
     </div>
   );
 }
@@ -207,6 +208,18 @@ function Charts({ r, metrics, parent }: { r: Run; metrics: Metrics; parent: Metr
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function Model({ r }: { r: Run }) {
+  const [name, setName] = React.useState(r.model_graphs[0]?.name ?? "");
+  const graph = useQuery({ queryKey: ["model-graph", r.slug, name], enabled: !!name, queryFn: () => get<ModelGraphData>(`/api/runs/${encodeURIComponent(r.slug)}/model-graph`, { name }) });
+  if (!r.model_graphs.length) return <Empty title="No model graph logged">For a PyTorch model, call <code>run.watch(model)</code> once before training. The layers, their shapes, how they connect and where each loss comes from are captured from the first training step. The Ultralytics, Hugging Face and Lightning integrations do this for you.</Empty>;
+  return (
+    <div className="space-y-3">
+      {r.model_graphs.length > 1 && <Segmented size="sm" value={name} onChange={setName} options={r.model_graphs.map((g) => ({ value: g.name, label: g.name }))} />}
+      {graph.data ? <React.Suspense fallback={<p className="text-[13px] text-muted-foreground">Loading…</p>}><ModelGraph key={graph.data.name} graph={graph.data} /></React.Suspense> : <p className="text-[13px] text-muted-foreground">{graph.error ? (graph.error as Error).message : "Loading…"}</p>}
     </div>
   );
 }

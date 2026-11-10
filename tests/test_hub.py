@@ -1,7 +1,11 @@
 """End-to-end tests through the HTTP API, the Python client and the CLI."""
 
+import base64
 import io
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -432,6 +436,151 @@ def test_deleting_runs_and_projects(site, monkeypatch, capsys):
             assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE project='detectors'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM metrics WHERE run IN ('keep', 'child')").fetchone()[0] == 0
     assert site.ada.get("/api/runs/elsewhere")["project"] == "research"  # the other project is untouched
+
+
+def test_mcp_tools_for_an_agent_without_a_shell(site, monkeypatch, tmp_path):
+    np = pytest.importorskip("numpy")
+    owner = site.agent("agent-a", project="detectors")
+    monkeypatch.setenv("HUB_AGENT", "agent-a")
+    monkeypatch.setenv("HUB_PROJECT", "detectors")
+    run = hubclient.init("yolo-n", title="YOLO nano")
+    run.log_eval([{"sample": "img-1", "facts": {"camera": "c2"}, "image": np.full((16, 16, 3), 0.5),
+                   "true": {"class": "cat", "masks": {"object": np.eye(16)}},
+                   "pred": {"class": "dog", "score": 0.9, "masks": {"object": np.eye(16) * 0.8}}, "error": 0.9},
+                  {"sample": "img-2", "facts": {"camera": "c1"}, "true": {"class": "cat"}, "pred": {"class": "cat"}}],
+                 step=5, eval_set="pets@1.0:val")
+
+    # a reviewer agent that only has MCP: one server process, its own key, newline-delimited JSON-RPC
+    key = site.ada.post("/api/agents", {"name": "reviewer", "projects": ["detectors"]})["key"]
+    env = {**os.environ, "HUB_URL": site.url, "HUB_TOKEN": key, "HUB_PROJECT": "detectors", "HUB_CREDENTIALS": str(tmp_path / "none.json")}
+    env.pop("HUB_AGENT", None)
+    server = subprocess.Popen([sys.executable, "-m", "research_hub", "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              text=True, env=env)
+    ids = iter(range(1, 100))
+
+    def rpc(method, **params):
+        server.stdin.write(json.dumps({"jsonrpc": "2.0", "id": next(ids), "method": method, "params": params}) + "\n")
+        server.stdin.flush()
+        return json.loads(server.stdout.readline())["result"]
+
+    def tool(name, **arguments):
+        return rpc("tools/call", name=name, arguments=arguments)
+
+    try:
+        hello = rpc("initialize", protocolVersion="2025-06-18", capabilities={}, clientInfo={"name": "test", "version": "0"})
+        assert hello["protocolVersion"] == "2025-06-18" and hello["serverInfo"]["name"] == "research-hub"
+        server.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")  # no reply expected
+        names = {t["name"] for t in rpc("tools/list")["tools"]}
+        assert {"inbox", "handbook", "run_get", "samples", "sample_image", "comment", "resolve", "msg_send"} <= names
+        assert not [n for n in names if "delete" in n or "member" in n or "key" in n]
+
+        assert "YOLO nano" in tool("run_get", run="yolo-n")["content"][0]["text"]
+        listed = tool("samples", run="yolo-n", outcome="wrong_class", facts={"camera": "c2"})["content"][0]["text"]
+        assert "1 matching samples" in listed and "img-1" in listed and "img-2" not in listed
+        seen = tool("sample_image", run="yolo-n", sample="img-1")["content"]
+        assert json.loads(seen[0]["text"])["predicted"]["class"] == "dog"
+        shown = json.loads(seen[0]["text"])["images_below"]  # the photo, then the true and the predicted mask
+        assert len(shown) == 3 and shown[0] == "image" and [b["type"] for b in seen] == ["text", "image", "image", "image"]
+        assert seen[1]["mimeType"] == "image/webp" and seen[2]["mimeType"] == "image/png"
+        assert base64.b64decode(seen[1]["data"])[:4] == b"RIFF"
+
+        said = tool("comment", target="run:yolo-n", kind="question", body="Why is 'img-1' a \"dog\"? $HOME `x`")
+        assert not said["isError"]
+        comment = owner.get("/api/runs/yolo-n")["comments"][0]
+        assert comment["author"] == "reviewer" and comment["body"] == "Why is 'img-1' a \"dog\"? $HOME `x`"  # nothing mangled
+        assert not tool("msg_send", body="@agent-a see my question on run:yolo-n")["isError"]
+        assert "see my question" in tool("msg_read")["content"][0]["text"]
+
+        # refusals come back as tool errors the model can read, and the server keeps running
+        refused = tool("note", run="yolo-n", body="not my run")
+        assert refused["isError"] and "only agent-a logs" in refused["content"][0]["text"]
+        assert tool("run_get")["isError"] and tool("nope")["isError"]
+        assert rpc("ping") == {}
+    finally:
+        server.stdin.close()
+        server.wait(timeout=10)
+
+
+def test_model_graph_from_one_training_step(site, monkeypatch):
+    site.agent("agent-a", project="detectors")
+    monkeypatch.setenv("HUB_AGENT", "agent-a")
+    monkeypatch.setenv("HUB_PROJECT", "detectors")
+    run = hubclient.init("graph")
+
+    # the server stores what it understands and refuses the rest
+    graph = {"model": "Tiny", "params": 10, "nodes": [{"id": "a", "kind": "input", "name": "x", "type": "Input", "out_shape": [2, 3]},
+                                                     {"id": "b", "kind": "module", "name": "fc", "type": "Linear", "junk": "dropped"}],
+             "edges": [{"from": "a", "to": "b", "shape": [2, 3]}]}
+    assert run.log_model_graph(graph, name="by-hand") == {"name": "by-hand", "nodes": 2, "edges": 1}
+    stored = site.ada.get(f"/api/runs/{run.slug}/model-graph", name="by-hand")
+    assert stored["nodes"][1] == {"id": "b", "kind": "module", "name": "fc", "type": "Linear"} and stored["params"] == 10
+    with denied("between two nodes"):
+        run.log_model_graph({**graph, "edges": [{"from": "a", "to": "missing"}]})
+    with denied("finite number"):
+        run.log_model_graph({**graph, "nodes": [{"id": "a", "kind": "op", "grad_norm": "big"}]})
+
+    # an ordinary training loop with one added line
+    torch = pytest.importorskip("torch")
+    nn = torch.nn
+
+    class Net(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.stem = nn.Sequential(nn.Conv2d(3, 8, 3, padding=1), nn.ReLU())
+            self.body = nn.Conv2d(8, 8, 3, padding=1)
+            self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(8, 4))
+
+        def forward(self, x):
+            x = self.stem(x)
+            return self.head(x + self.body(x))  # a skip connection, written as plain tensor maths
+
+    torch.manual_seed(0)
+    model = Net()
+    optimiser = torch.optim.SGD(model.parameters(), lr=0.1)
+    run.watch(model)
+    for _ in range(2):
+        loss = nn.functional.cross_entropy(model(torch.randn(2, 3, 8, 8)), torch.tensor([1, 3]))
+        optimiser.zero_grad()
+        loss.backward()
+        optimiser.step()
+    assert all(p.grad is not None for p in model.parameters())  # the step itself was untouched
+    assert torch.Tensor.backward.__qualname__ == "Tensor.backward" and not any(m._forward_hooks for m in model.modules())
+
+    g = site.ada.get(f"/api/runs/{run.slug}/model-graph", name="model")
+    nodes = {n["id"]: n for n in g["nodes"]}
+    edges = {(e["from"], e["to"]) for e in g["edges"]}
+    assert g["model"] == "Net" and g["params"] == sum(p.numel() for p in model.parameters())
+    assert nodes["stem.0"]["type"] == "Conv2d" and nodes["stem.0"]["out_shape"] == [2, 8, 8, 8] and nodes["stem.0"]["grad_norm"] > 0
+    add = next(n for n in g["nodes"] if n["type"] == "Add")
+    assert {("stem.1", add["id"]), ("body", add["id"]), (add["id"], "head.0")} <= edges  # both arms of the skip
+    assert ("input:input", "stem.0") in edges and nodes["input:input"]["out_shape"] == [2, 3, 8, 8]
+    losses = {n["loss"]: n for n in g["nodes"] if n["kind"] == "loss"}
+    assert set(losses) == {"total"} and losses["total"]["type"] == "NllLoss" and losses["total"]["value"] > 0
+    assert [m["name"] for m in site.ada.get(f"/api/runs/{run.slug}")["model_graphs"]] == ["by-hand", "model"]
+
+    def train(name):
+        run.watch(model, name=name)
+        for _ in range(2):
+            optimiser.zero_grad()
+            nn.functional.cross_entropy(model(torch.randn(2, 3, 8, 8)), torch.tensor([1, 3])).backward()
+            optimiser.step()
+        assert torch.Tensor.backward.__qualname__ == "Tensor.backward" and not any(m._forward_hooks for m in model.modules())
+
+    # a graph too large to send has its deepest blocks folded into one node each
+    from research_hub import modelgraph
+    monkeypatch.setattr(modelgraph, "MAX_NODES", 7)
+    train("folded")
+    folded = site.ada.get(f"/api/runs/{run.slug}/model-graph", name="folded")
+    assert {n["id"] for n in folded["nodes"]} >= {"block:stem", "block:head", "body", "input:input"} and len(folded["nodes"]) == 7
+    assert {("input:input", "block:stem"), ("block:stem", "body")} <= {(e["from"], e["to"]) for e in folded["edges"]}
+
+    # a hook that fails (say, out of memory while reading statistics) costs the diagram, never the training step
+    def out_of_memory(tensor):
+        raise RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(modelgraph, "_sample", out_of_memory)
+    train("broken")
+    assert all(p.grad is not None for p in model.parameters())
+    assert [m["name"] for m in site.ada.get(f"/api/runs/{run.slug}")["model_graphs"]] == ["by-hand", "folded", "model"]
 
 
 def test_projects_handbook_feedback_and_chat(site, capsys):

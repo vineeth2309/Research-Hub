@@ -85,6 +85,46 @@ log_classifier(run, model, X_test, y_test)   # confusion matrix, ROC, PR, calibr
 log_regressor(run, model, X_test, y_test)    # predicted vs actual, residuals, error distribution
 ```
 
+## Model architecture
+
+For a PyTorch model, one line logs an interactive diagram of the network to the run's **Model** tab:
+
+```python
+run.watch(model)        # once, before training
+```
+
+The first training step is recorded as it happens: every layer with its input and output shapes and parameter
+count, how the layers connect (including skip connections and plain tensor operations such as `x + y` or
+`torch.cat`), which blocks they belong to, where each loss comes from, and the gradient norm at every layer.
+Nothing extra is run, no export or tracing is needed, and the hooks are removed after that step.
+
+In the Model tab you can scroll and zoom, open and close blocks, click a layer to see what flows into and out of
+it with the tensor shapes, click a loss to see everything that feeds it, and replay the forward and backward
+pass. Switch the labels between shapes, gradient norms and activation statistics.
+
+- The Ultralytics, Hugging Face and Lightning integrations call `run.watch` for you; pass `watch=False` to
+  `attach(...)` or `HubCallback(...)` to turn it off.
+- Loss terms are found automatically when they come from a standard loss or a loss module. To name the terms
+  yourself, capture by hand:
+
+  ```python
+  from research_hub.modelgraph import Trace
+
+  trace = Trace(model)
+  logits, mask = model(trace.input("image", images))
+  ce, bce = F.cross_entropy(logits, labels), F.binary_cross_entropy_with_logits(mask, masks)
+  run.log_model_graph(trace.backward(ce + 0.5 * bce, {"class loss": ce, "mask loss": bce}))
+  ```
+
+- Large models are fine. Weights, activations and gradients are never copied: statistics come from a sample of
+  at most 65,536 values per tensor. On a real-size 8-billion-parameter transformer the captured step took the
+  same time and memory as an ordinary one (measured on CPU), and a graph with more than 4,000 nodes has its
+  deepest blocks folded into single nodes so it still fits.
+- Limits: PyTorch only. Code under `torch.no_grad()` shows its layers but not what connects them. Compiled or
+  scripted models are not captured. When loss terms are written into one tensor in place, the diagram shows
+  them as one "loss computation" block. If anything goes wrong during capture, training continues and a
+  one-line warning is printed.
+
 ## System metrics
 
 Off by default. Turn on background sampling of the machine with an argument or, without touching the script,

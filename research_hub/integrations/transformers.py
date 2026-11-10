@@ -25,8 +25,8 @@ class HubCallback(TrainerCallback):
     Finish the run yourself, with a conclusion: ``callback.run.finish("…")``.
     """
 
-    def __init__(self, run: hub.Run | None = None, **init):
-        self.run, self._init, self._last_eval = run, init, {}
+    def __init__(self, run: hub.Run | None = None, watch: bool = True, **init):
+        self.run, self._init, self._last_eval, self._watch = run, init, {}, watch
 
     def on_train_begin(self, args, state, control, **kwargs):
         if not state.is_world_process_zero:
@@ -34,6 +34,8 @@ class HubCallback(TrainerCallback):
         if self.run is None:
             self.run = hub.init(**self._init)
         self.run.set_config(plain(args.to_dict()))
+        if self._watch and kwargs.get("model") is not None:  # the architecture, from the first training step
+            self.run.watch(kwargs["model"])
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if not state.is_world_process_zero or self.run is None or not logs:

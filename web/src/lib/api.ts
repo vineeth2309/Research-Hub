@@ -67,7 +67,7 @@ export interface EvalSet { set: string; steps: EvalStep[] }
 export interface Run extends RunRow {
   app: string; hypothesis: string; rationale: string; expected: string; conclusion: string; repo: string; config_path: string; config_sha: string; command: string;
   output_dataset: string; pinned: string[]; topics: string[];
-  summary_metrics: { key: string; value: number; direction: string; parent_value?: number | null }[]; metric_keys: string[]; charts: number; artifacts: Artifact[];
+  summary_metrics: { key: string; value: number; direction: string; parent_value?: number | null }[]; metric_keys: string[]; charts: number; model_graphs: { name: string; n_nodes: number; params: number }[]; artifacts: Artifact[];
   notes: Note[]; children: string[]; links: { src: string; dst: string; relation: string }[]; eval_sets: EvalSet[]; comments: Comment[];
 }
 export type ChartKind = "line" | "area" | "scatter" | "bar" | "pie" | "histogram" | "box" | "violin" | "heatmap" | "table";
@@ -75,6 +75,8 @@ export interface ChartSpec { kind: ChartKind; title: string; data: { columns: Re
 export interface ChartInfo { name: string; kind: ChartKind; title: string; rows: number; steps: number[] }
 export interface ChartData extends ChartSpec { name: string; step: number | null; steps: number[]; history?: (ChartSpec & { step: number })[] }
 export interface SharedChart { name: string; kind: ChartKind; title: string; runs: string[] }
+export interface GraphNode { id: string; kind: "input" | "module" | "op" | "loss"; name: string; type: string; group?: string; detail?: string; params?: number; in_shapes?: (number[] | null)[]; out_shape?: number[] | null; act_mean?: number | null; act_std?: number | null; grad_norm?: number | null; loss?: string; value?: number | null; dtype?: string }
+export interface ModelGraphData { name: string; model: string; params: number; trainable?: number; nodes: GraphNode[]; edges: { from: string; to: string; shape?: number[] | null }[]; blocks?: Record<string, string> }
 export type Series = [number, number][];
 export type Metrics = Record<string, Series>;
 export interface Post { slug: string; project?: string; topic: string; owner: string; kind: string; basis: string; title: string; body: string; revision: number; created: string; updated: string; comment_count?: number; refs: string[]; referenced_by?: string[]; citations?: { title: string; url: string; venue: string }[]; comments?: Comment[] }

@@ -428,9 +428,11 @@ def cmd_run_samples(a, hub):
         key, _, value = kv.partition("=")
         q[f"fact.{key}"] = value
     res = hub.get(f"/api/runs/{a.slug}/eval/samples", **q)
-    if a.json:
-        return _out(res)
-    print(f"{res['set']} @ step {res['step']}: {res['total']} matching samples")
+    print(json.dumps(res, indent=2) if a.json else _fmt_samples(res))
+
+
+def _fmt_samples(res) -> str:
+    out = [f"{res['set']} @ step {res['step']}: {res['total']} matching samples"]
     for r in res["rows"]:
         facts = " ".join(f"{k}={v}" for k, v in r["facts"].items())
         t, p = r["truth"], r["pred"]
@@ -439,8 +441,9 @@ def cmd_run_samples(a, hub):
             val += f"->{p['value']:.2f}"
         err = "" if r["error"] is None else f" err {r['error']:.3g}"
         vs = f" | vs: {r['vs_class_pred']} ({r['vs_outcome']})" if "vs_outcome" in r else ""
-        print(f"  {r['outcome']:<11} {t.get('class', '?'):>14} -> {p.get('class') or p.get('text', '')[:14]:<14} "
-              f"{facts}{val}{err} [{','.join(sorted(r['layers'])) or 'no layers'}] {r['sample'][:60]}{vs}")
+        out.append(f"  {r['outcome']:<11} {t.get('class', '?'):>14} -> {p.get('class') or p.get('text', '')[:14]:<14} "
+                   f"{facts}{val}{err} [{','.join(sorted(r['layers'])) or 'no layers'}] {r['sample'][:60]}{vs}")
+    return "\n".join(out)
 
 
 # --------------------------------------------------------------- discussion
@@ -491,6 +494,11 @@ def cmd_msg_read(a, hub):
     for m in hub.get(f"/api/channels/{a.channel}/messages", since=a.since, limit=a.limit):
         thread = f" (in thread {m['parent_id']})" if m["parent_id"] else ""
         print(f"[{m['id']}] {m['created']} {m['author']}{thread}: {m['body']}")
+
+
+def cmd_mcp(a, hub):
+    from .mcp import serve
+    serve(hub)
 
 
 def cmd_claim(a, hub):
@@ -780,6 +788,8 @@ def build_parser():
     s.add_argument("--since", type=int, default=0)
     s.add_argument("--limit", type=int, default=100)
     s.set_defaults(fn=cmd_msg_read)
+    sub.add_parser("mcp", help="serve the hub to an agent as MCP tools over stdio (for agents without a shell)"
+                   ).set_defaults(fn=cmd_mcp)
     s = sub.add_parser("claim", help="claim an idea or resource so others don't duplicate it")
     s.add_argument("resource")
     s.add_argument("--note")

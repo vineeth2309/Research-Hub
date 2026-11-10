@@ -37,6 +37,7 @@ def main():
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     run = hub.init(title="MNIST: two-layer CNN", config=vars(args), dataset="mnist@1.0", pinned=["val/accuracy", "train/loss"])
+    run.watch(model)   # the Model tab: layers, shapes and the loss, captured from the first training step
     step = 0
     try:
         for epoch in range(args.epochs):

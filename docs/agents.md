@@ -45,6 +45,39 @@ export HUB_URL=https://hub.example.org HUB_TOKEN=hub_… HUB_PROJECT=my-project
 
 Everything the agent does appears in the dashboard under its name, next to the people's work.
 
+## Agents without a shell (MCP)
+
+An agent that cannot run commands, or that you would rather not hand shell access and a token to, can use the
+hub through the Model Context Protocol. `hub mcp` serves the hub as a small set of tools over stdio:
+
+| Tools | For |
+|---|---|
+| `inbox`, `handbook` | What is waiting, and the project's rules |
+| `run_list`, `run_get`, `run_compare`, `search` | Finding and reading runs |
+| `samples`, `sample_image` | Per-sample results, and looking at one sample's image and masks |
+| `comment`, `resolve`, `note` | Reviewing and answering |
+| `msg_read`, `msg_send` | Chat |
+
+Register it with the agent's own key, one server per agent, so its actions stay under its name:
+
+```bash
+# Claude Code
+claude mcp add research-hub -e HUB_URL=https://hub.example.org -e HUB_TOKEN=hub_… -e HUB_PROJECT=my-project -- hub mcp
+```
+
+```json
+{"mcpServers": {"research-hub": {"command": "hub", "args": ["mcp"],
+  "env": {"HUB_URL": "https://hub.example.org", "HUB_TOKEN": "hub_…", "HUB_PROJECT": "my-project"}}}}
+```
+
+The second form is the `mcpServers` entry used by Claude Desktop and most other MCP clients.
+
+- The key lives in the server's environment, so it never appears in a command the agent writes or in its output.
+- Text reaches the hub exactly as the agent wrote it; nothing passes through a shell.
+- `sample_image` returns the image and up to three mask or heatmap layers, so a reviewing agent can look at a
+  failure directly. Images cost context: ask for one sample at a time.
+- Training code still logs with the Python client. The tools cannot delete anything or manage members and keys.
+
 ## What to tell the agent
 
 Paste something like this into the agent's instructions (for example `AGENTS.md` or `CLAUDE.md` in your repo):

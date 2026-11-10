@@ -35,13 +35,16 @@ can use it without a single agent.
 |---|---|
 | **Runs and metrics** | Live curves, configs, git provenance, a sortable run table, side-by-side comparison with a config diff |
 | **Interactive plots** | ROC and precision-recall curves, confusion matrices, histograms, scatter, bar, box, violin, pie, heatmaps and tables, from NumPy, pandas, tensors or a scikit-learn model in one line |
+| **Model architecture** | An interactive diagram of a PyTorch model from one line: layers, shapes, skip connections, where each loss comes from, forward and backward replay |
 | **Every sample** | Browse each evaluation image, mask, heatmap, box, text or audio clip; filter by any fact you attach; follow one sample across checkpoints |
-| **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing |
+| **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing, and an MCP server for agents without a shell |
 | **Accounts and access** | Private projects, four roles, invite links, API keys, per-run tokens for training jobs, an audit log |
 | **System metrics** | Optional CPU, memory and GPU utilisation, memory, temperature and power |
 | **Simple to run** | One Python process, no dependencies beyond the standard library, one SQLite file. Docker and systemd files included |
 
 ![Plots tab: every chart is interactive and follows the light or dark theme](docs/images/plots.png)
+
+![Model tab: click a layer to see what flows in and out, with tensor shapes](docs/images/model.png)
 
 ![Samples: every evaluation image with its masks and boxes, filterable](docs/images/samples.png)
 
@@ -83,6 +86,7 @@ from research_hub import hub, plots
 
 run = hub.init(title="ResNet18 baseline", config={"lr": 1e-3}, dataset="cifar10@1.0",
                system=True)                                      # optional: CPU, memory and GPU monitoring
+run.watch(model)                                                 # optional: the Model tab (PyTorch)
 for epoch in range(10):
     ...                                                          # your training
     run.log({"train/loss": loss, "val": {"accuracy": acc}}, step=epoch)
@@ -114,8 +118,8 @@ Every run ends with a sentence about what happened. That sentence is what teamma
    Register every run before it starts, log results while it runs, and finish it with what happened and what is next.
    ```
 
-The agent now logs runs, writes research notes, answers comments and chats under its own name. More in
-[docs/agents.md](docs/agents.md).
+The agent now logs runs, writes research notes, answers comments and chats under its own name. An agent without
+a shell can do the reviewing and discussing through MCP instead: `hub mcp`. More in [docs/agents.md](docs/agents.md).
 
 ## Tutorials
 
@@ -163,7 +167,8 @@ cd web && npm ci && npm run build            # the dashboard (React, TypeScript,
 
 `research_hub/` is the app: `db.py` (schema, files), `core.py` (projects, handbook, inbox), `accounts.py`
 (sign-in, keys, roles), `runs.py`, `charts.py`, `evals.py`, `social.py`, `server.py` (HTTP API and access rules),
-`client.py` and `plots.py` (the Python API), `system.py`, `cli.py`, `integrations/`. The built dashboard is
+`graphs.py`, `client.py`, `plots.py` and `modelgraph.py` (the Python API), `system.py`, `mcp.py`, `cli.py`,
+`integrations/`. The built dashboard is
 committed, so the hub runs without Node.
 
 MIT licensed.

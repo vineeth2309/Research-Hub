@@ -126,6 +126,15 @@ class Hub:
     def delete(self, path):
         return self.request("DELETE", path)
 
+    def blob(self, sha: str) -> tuple[bytes, str]:
+        """A logged file by its id: (bytes, content type)."""
+        req = urllib.request.Request(f"{self.url}/blobs/{sha}", headers={"Authorization": f"Bearer {self.token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return resp.read(), resp.headers.get_content_type()
+        except urllib.error.HTTPError as e:
+            raise HubRequestError(e.code, f"file {sha[:12]} could not be read: {e.reason}") from None
+
 
 # -------------------------------------------------------------------- provenance
 def _git(args, cwd) -> str:
@@ -351,6 +360,19 @@ class Run:
         return self._send("POST", f"/api/runs/{self.slug}/artifacts",
                           {"name": f"{name.replace('/', '-')}.png", "data": base64.b64encode(out.getvalue()).decode(),
                            "kind": "plot", "step": step, "caption": caption or name})
+
+    def watch(self, model, name: str = "model"):
+        """Log a PyTorch model's architecture from its first training step: layers, shapes, connections, losses.
+
+        Call once before training. Nothing extra is run and the hooks are removed after that step. See
+        ``research_hub/modelgraph.py``.
+        """
+        from . import modelgraph  # imported here because it needs torch
+        modelgraph.watch(model, lambda graph: self.log_model_graph(graph, name))
+
+    def log_model_graph(self, graph: dict, name: str = "model"):
+        """Log a graph captured by hand with ``research_hub.modelgraph.Trace``."""
+        return self._send("POST", f"/api/runs/{self.slug}/model-graph", {"name": name, "graph": graph})
 
     def set_config(self, config: dict):
         """Store (or replace) the run's config snapshot; used when the config is only known after ``init``."""

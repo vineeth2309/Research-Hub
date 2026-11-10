@@ -23,6 +23,8 @@
     --warning: 32 90% 36%;   --warning-soft: 42 95% 93%;
     --danger: 0 72% 46%;     --danger-soft: 0 85% 95%;
     --human: 270 60% 48%;    --human-soft: 270 70% 95%;
+    --mg-conv: 243 75% 58%; --mg-norm: 174 72% 28%; --mg-act: 32 90% 36%; --mg-linear: 271 81% 56%; --mg-attn: 330 81% 42%; --mg-pool: 215 16% 47%;
+    --mg-in: 221 83% 53%; --mg-out: 21 90% 48%;
     color-scheme: light;
   }
   .dark {
@@ -45,6 +47,8 @@
     --warning: 40 85% 62%;   --warning-soft: 38 50% 14%;
     --danger: 0 80% 70%;     --danger-soft: 0 45% 16%;
     --human: 270 70% 75%;    --human-soft: 270 35% 18%;
+    --mg-conv: 240 85% 72%; --mg-norm: 171 77% 64%; --mg-act: 43 96% 56%; --mg-linear: 270 95% 75%; --mg-attn: 329 86% 70%; --mg-pool: 215 20% 65%;
+    --mg-in: 213 94% 68%; --mg-out: 27 96% 61%;
     color-scheme: dark;
   }
   * { @apply border-border; }
@@ -72,3 +76,36 @@
 .plot-host figure > div { font: 500 11.5px/1.4 inherit; font-family: inherit; color: hsl(var(--muted-foreground)); margin-left: 8px; min-height: 0; }
 .plot-host svg { max-width: 100%; height: auto; }
 .plot-host [aria-label="tip"] { color: hsl(var(--foreground)); }
+
+/* Model graph (components/ModelGraph.tsx) */
+.mg-node { cursor: pointer; transition: opacity .15s; }
+.mg-body { fill: hsl(var(--card)); stroke: hsl(var(--border)); stroke-width: 1; filter: drop-shadow(0 1px 1.5px rgb(16 24 40 / .08)); }
+.mg-node:hover .mg-body { stroke: hsl(var(--muted-foreground)); }
+.mg-sel .mg-body { stroke: hsl(var(--primary)); stroke-width: 2; }
+.mg-t1 { font-size: 12.5px; font-weight: 600; fill: hsl(var(--foreground)); }
+.mg-t2 { font: 10.5px "JetBrains Mono", ui-monospace, monospace; fill: hsl(var(--muted-foreground)); }
+.mg-t3 { font: 10.5px "JetBrains Mono", ui-monospace, monospace; fill: hsl(var(--foreground)); }
+.mg-op .mg-body { fill: hsl(var(--muted)); }
+.mg-op .mg-t1 { font-size: 11.5px; font-weight: 550; }
+.mg-loss .mg-body { stroke: hsl(var(--danger)); }
+.mg-loss .mg-t1 { fill: hsl(var(--danger)); }
+.mg-group .mg-body { stroke-dasharray: 5 4; }
+.mg-stack { fill: hsl(var(--border)); }
+.mg-box { fill: hsl(var(--primary) / .045); stroke: hsl(var(--primary) / .28); stroke-dasharray: 4 4; }
+.mg-boxlabel { font: 600 10.5px "JetBrains Mono", ui-monospace, monospace; fill: hsl(var(--primary)); cursor: pointer; }
+.mg-edge { fill: none; stroke: hsl(var(--muted-foreground) / .55); stroke-width: 1.3; transition: opacity .15s; }
+.mg-edge.mg-in { stroke: hsl(var(--mg-in)); stroke-width: 2.2; }
+.mg-edge.mg-out { stroke: hsl(var(--mg-out)); stroke-width: 2.2; }
+.mg-edge.mg-up { stroke: hsl(var(--danger)); stroke-width: 1.9; }
+.mg-dim { opacity: .16; }
+.mg-elabel rect { fill: hsl(var(--card)); }
+.mg-elabel.mg-in rect { stroke: hsl(var(--mg-in)); }
+.mg-elabel.mg-out rect { stroke: hsl(var(--mg-out)); }
+.mg-elabel text { font: 10.5px "JetBrains Mono", ui-monospace, monospace; fill: hsl(var(--foreground)); text-anchor: middle; }
+.mg-edge.mg-flow-f { stroke: hsl(var(--primary)); stroke-width: 2.6; stroke-dasharray: 7 7; animation: mg-dash-f .5s linear infinite; }
+.mg-edge.mg-flow-b { stroke: hsl(var(--mg-out)); stroke-width: 2.4; stroke-dasharray: 7 7; animation: mg-dash-b .5s linear infinite; }
+@keyframes mg-dash-f { to { stroke-dashoffset: -14; } }
+@keyframes mg-dash-b { to { stroke-dashoffset: 14; } }
+.mg-lit-f .mg-body { stroke: hsl(var(--primary)); stroke-width: 2.2; fill: color-mix(in srgb, hsl(var(--primary)) 13%, hsl(var(--card))); }
+.mg-lit-b .mg-body { stroke: hsl(var(--mg-out)); stroke-width: 2.2; }
+@media (prefers-reduced-motion: reduce) { .mg-edge.mg-flow-f, .mg-edge.mg-flow-b { animation: none; } }

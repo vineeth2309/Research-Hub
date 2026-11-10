@@ -37,6 +37,11 @@ class HubLogger(Logger):
 
     experiment = run
 
+    @rank_zero_only
+    def log_graph(self, model, input_array=None) -> None:
+        """Called by the Trainer when a fit starts: capture the architecture from the first training step."""
+        self.run.watch(model)
+
     @property
     def name(self) -> str:
         return self.run.hub.project or "hub"

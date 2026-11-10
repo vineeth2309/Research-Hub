@@ -235,6 +235,9 @@ class Api:
             R("GET", "/api/runs/([^/]+)/charts", lambda c: s.charts(c.m[0]), "run", "viewer"),
             R("GET", "/api/runs/([^/]+)/chart", lambda c: s.chart(
                 c.m[0], c.q.get("name"), c.q.get("step"), c.q.get("history") == "1"), "run", "viewer"),
+            R("POST", "/api/runs/([^/]+)/model-graph", lambda c: s.log_model_graph(
+                c.actor, c.m[0], c.body.get("name"), c.body.get("graph")), "run", "member", ingest=True),
+            R("GET", "/api/runs/([^/]+)/model-graph", lambda c: s.model_graph(c.m[0], c.q.get("name")), "run", "viewer"),
             R("GET", "/api/runs/([^/]+)/config", lambda c: {"text": s.config_text(c.m[0])}, "run", "viewer"),
             R("POST", "/api/runs/([^/]+)/eval", lambda c: s.log_eval(
                 c.actor, c.m[0], c.body.get("set"), c.body.get("step"), c.body.get("rows"), c.body.get("epoch"),

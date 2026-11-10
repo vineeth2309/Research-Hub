@@ -6,11 +6,12 @@ from .accounts import Accounts
 from .charts import Charts
 from .core import Core
 from .evals import Evals
+from .graphs import Graphs
 from .runs import Runs
 from .social import Social
 
 
-class Store(Core, Accounts, Runs, Charts, Evals, Social):
+class Store(Core, Accounts, Runs, Charts, Graphs, Evals, Social):
     def reindex(self) -> int:
         """Rebuild the full-text index from the tables."""
         n = 0

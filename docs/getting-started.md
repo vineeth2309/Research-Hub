@@ -108,7 +108,7 @@ any time.
 |---|---|
 | **Home** | What is running, recent activity, who is working on what |
 | **Runs** | Every run as a list or a table of summary metrics; tick runs to compare them |
-| **A run** | Overview, Metrics (curves), Plots, Samples (every evaluation sample), Visuals, Files, Discussion |
+| **A run** | Overview, Metrics (curves), Plots, Model (architecture), Samples (every evaluation sample), Visuals, Files, Discussion |
 | **Research** | Notes and findings grouped by topic, each linked to the runs behind it |
 | **Messages** | Chat channels; `@name` reaches that account's inbox |
 | **Feedback** | Open review comments across the project, and handbook change proposals |
