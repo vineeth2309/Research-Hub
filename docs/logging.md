@@ -32,6 +32,10 @@ run.finish("93% after 10 epochs. Next: cosine schedule.")                     # 
 Numbers can be Python floats, numpy scalars or 0-d tensors. If the hub is unreachable, metric and note calls
 are saved to `~/.cache/research_hub/spool` and replayed on the next call, so an outage never stops training.
 
+`run.log` is cheap to call on every step: points are sent in batches, at most every two seconds or 500 points,
+and always before any other call on the run and when the program exits. `run.flush()` sends them at once. A
+rejected batch (for example, logging to a run that has finished) raises at the send, not at `run.log`.
+
 A job that should only be able to write to one run can use that run's **ingest token** instead of your key:
 
 ```python

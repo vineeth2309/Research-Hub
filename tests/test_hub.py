@@ -221,6 +221,25 @@ def test_plain_tracking_and_research_rules(site, capsys):
     assert table["runs"][0]["values"] == {"val/map50": 0.7} and table["available"][0]["key"] in ("val/map50", "train/loss")
     with denied("no longer accepts"):
         run.log({"x": 1}, step=300)
+        run.flush()
+
+    # logging every step costs a handful of requests, not one per step ...
+    busy = hubclient.init("busy", project="detectors", hub=site.hub(agent.token))
+    sent, request = [], busy.hub.request
+    busy.hub.request = lambda method, path, *args, **kwargs: (sent.append(path), request(method, path, *args, **kwargs))[1]
+    for step in range(300):
+        busy.log({"loss": 1 / (step + 1), "lr": 0.1}, step=step)
+    busy.finish("done")
+    assert len([path for path in sent if path.endswith("/metrics")]) <= 3
+    assert len(agent.get("/api/runs/busy/metrics")["loss"]) == 300 and agent.get("/api/runs/busy")["status"] == "finished"
+    # ... and a read never writes: no commit, so no wait for the write lock and no disk sync
+    with site.store.connect() as conn:
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+        version = conn.execute("PRAGMA data_version").fetchone()[0]
+        for _ in range(5):
+            agent.get("/api/runs/busy")
+            agent.get("/api/runs", project="detectors")
+        assert conn.execute("PRAGMA data_version").fetchone()[0] == version
     # a training job that only holds the run's ingest token resumes and logs
     job = hubclient.init("yolo-s", project="detectors", hub=site.hub(agent.token))
     resumed = hubclient.init("yolo-s", resume=True, hub=site.hub(job.ingest_token))

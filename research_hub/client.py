@@ -17,6 +17,7 @@ In a job that only has HUB_URL / HUB_RUN / HUB_TOKEN (a run's ingest token), use
 
 from __future__ import annotations
 
+import atexit
 import base64
 import hashlib
 import io
@@ -40,6 +41,8 @@ DEFAULT_URL = "http://localhost:6230"
 CRED_PATH = Path(os.environ.get("HUB_CREDENTIALS", "~/.config/research_hub/credentials.json")).expanduser()
 SPOOL_DIR = Path(os.environ.get("HUB_SPOOL", "~/.cache/research_hub/spool")).expanduser()
 EVAL_CHUNK = 1000
+FLUSH_POINTS = 500     # metric points buffered before they are sent ...
+FLUSH_SECONDS = 2.0    # ... or this long since the last send, whichever comes first
 UPLOAD_BYTES = 24 * 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{64}")
 
@@ -256,6 +259,9 @@ class Run:
         self.spool = SPOOL_DIR / f"{slug}.jsonl"
         self._warned = False
         self._monitor = None
+        self._points: list[dict] = []   # metric points waiting to be sent
+        self._sent_at = 0.0
+        atexit.register(self.flush)
 
     def _watch_system(self, wanted, interval, started):
         if wanted:
@@ -271,6 +277,8 @@ class Run:
             pass
 
     def _send(self, method, path, body, spool=True, quiet=False):
+        if not path.endswith("/metrics"):
+            self.flush()  # keep the order: buffered metrics go before anything else, and before the run closes
         self._flush()
         for attempt in range(3):
             try:
@@ -315,8 +323,16 @@ class Run:
         flat = _flatten(metrics)
         if epoch is not None:
             flat["epoch"] = float(epoch)
-        points = [{"key": k, "step": int(step), "value": v} for k, v in flat.items()]
-        if points:
+        self._points += [{"key": k, "step": int(step), "value": v} for k, v in flat.items()]
+        if len(self._points) >= FLUSH_POINTS or time.monotonic() - self._sent_at >= FLUSH_SECONDS:
+            self.flush()
+
+    def flush(self):
+        """Send buffered metrics now. Logging every step costs one request every two seconds, not one per step;
+        everything is also sent before any other call on the run and when the program exits."""
+        if self._points:
+            points, self._points = self._points, []
+            self._sent_at = time.monotonic()
             self._send("POST", f"/api/runs/{self.slug}/metrics", {"points": points})
 
     def log_images(self, paths, step=None, epoch=None, caption="", sample="", role="", kind="image"):
@@ -333,6 +349,7 @@ class Run:
     def log_eval(self, rows: list[dict], step: int, eval_set: str, epoch: int | None = None, negatives=None,
                  base_dir=None) -> dict | None:
         """Per-sample results for one checkpoint; see ``log_eval`` below for the row format."""
+        self.flush()
         try:
             return log_eval(self.hub, self.slug, eval_set, step, rows, epoch, negatives, base_dir)
         except (urllib.error.URLError, TimeoutError, OSError) as e:

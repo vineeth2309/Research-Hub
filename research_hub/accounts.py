@@ -26,6 +26,7 @@ from .core import (
     text,
 )
 
+TOUCH_SECONDS = 60   # how stale a "last seen" time may get before a request refreshes it
 SIGNUP_MODES = ("invite", "approval", "open")
 EMAIL = re.compile(r"[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}")
 SESSION_DAYS = 30
@@ -191,37 +192,50 @@ class Accounts:
         return {"token": token, "csrf": csrf}
 
     def authenticate(self, token: str | None = None, session: str | None = None) -> dict | None:
-        """Resolve an API key, a run's ingest token or a browser session to an actor; None when nothing was sent."""
+        """Resolve an API key, a run's ingest token or a browser session to an actor; None when nothing was sent.
+
+        Reads only. "Last seen" times are refreshed at most once a minute, so an ordinary request never waits for
+        the database's write lock.
+        """
         if not token and not session:
             return None
-        ts = now()
-        with self.connect(write=True) as conn:
+        ts, stale, touch = now(), _later(seconds=-TOUCH_SECONDS), []
+        with self.connect() as conn:
             if token:
                 h = hash_token(token)
-                key = conn.execute("SELECT id, participant FROM api_keys WHERE key_hash=? AND revoked='' AND "
+                key = conn.execute("SELECT id, participant, last_used FROM api_keys WHERE key_hash=? AND revoked='' AND "
                                    "(expires='' OR expires>?)", (h, ts)).fetchone()
-                if key:
-                    conn.execute("UPDATE api_keys SET last_used=? WHERE id=?", (ts, key["id"]))
-                    return self._actor(conn, key["participant"], "key", ts)
-                run = conn.execute("SELECT slug, owner FROM runs WHERE ingest_token_hash=?", (h,)).fetchone()
-                if run:
-                    return {"name": run["owner"], "kind": "ingest", "run": run["slug"], "admin": False, "via": "ingest"}
-                raise Unauthorized("unknown, revoked or expired API key")
-            row = conn.execute("SELECT participant, csrf FROM sessions WHERE id_hash=? AND expires>?",
-                               (hash_token(session), ts)).fetchone()
-            if not row:
-                raise Unauthorized("your session has ended; sign in again")
-            conn.execute("UPDATE sessions SET last_seen=?, expires=? WHERE id_hash=?",
-                         (ts, _later(days=SESSION_DAYS), hash_token(session)))
-            return {**self._actor(conn, row["participant"], "session", ts), "csrf": row["csrf"]}
+                if not key:
+                    run = conn.execute("SELECT slug, owner FROM runs WHERE ingest_token_hash=?", (h,)).fetchone()
+                    if run:
+                        return {"name": run["owner"], "kind": "ingest", "run": run["slug"], "admin": False, "via": "ingest"}
+                    raise Unauthorized("unknown, revoked or expired API key")
+                actor = self._actor(conn, key["participant"], "key")
+                if key["last_used"] < stale:
+                    touch.append(("UPDATE api_keys SET last_used=? WHERE id=?", (ts, key["id"])))
+            else:
+                row = conn.execute("SELECT participant, csrf, last_seen FROM sessions WHERE id_hash=? AND expires>?",
+                                   (hash_token(session), ts)).fetchone()
+                if not row:
+                    raise Unauthorized("your session has ended; sign in again")
+                actor = {**self._actor(conn, row["participant"], "session"), "csrf": row["csrf"]}
+                if row["last_seen"] < stale:  # the sliding expiry moves with it
+                    touch.append(("UPDATE sessions SET last_seen=?, expires=? WHERE id_hash=?",
+                                  (ts, _later(days=SESSION_DAYS), hash_token(session))))
+        if actor.pop("last_seen") < stale:
+            touch.append(("UPDATE participants SET last_seen=? WHERE name=?", (ts, actor["name"])))
+        if touch:
+            with self.connect(write=True) as conn:
+                for sql, args in touch:
+                    conn.execute(sql, args)
+        return actor
 
     @staticmethod
-    def _actor(conn, name, via, ts) -> dict:
-        p = conn.execute("SELECT name, kind, display, email, admin, status, model, focus, owner FROM participants "
+    def _actor(conn, name, via) -> dict:
+        p = conn.execute("SELECT name, kind, display, email, admin, status, model, focus, owner, last_seen FROM participants "
                          "WHERE name=?", (name,)).fetchone()
         if not p or p["status"] != "active":
             raise Unauthorized("this account is not active")
-        conn.execute("UPDATE participants SET last_seen=? WHERE name=?", (ts, name))
         return {**dict(p), "admin": bool(p["admin"]), "via": via}
 
     def logout(self, session: str) -> None:

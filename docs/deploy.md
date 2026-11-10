@@ -88,6 +88,13 @@ and run `docker compose up -d`.
 `deploy/research-hub.service` is a user unit: copy it to `~/.config/systemd/user/`, adjust `HUB_HOME`, then
 `systemctl --user enable --now research-hub`.
 
+## Disk
+
+The database is SQLite in WAL mode with `synchronous=NORMAL`: it cannot be corrupted by a crash or a power cut,
+but a power cut can lose the last few commits. Reads never write, and "last seen" times are refreshed at most
+once a minute, so requests stay fast even when the data folder is on a disk that training jobs keep busy. If
+writes are still slow there, put the data folder on a quieter disk.
+
 ## Settings
 
 | Variable | Meaning | Default |

@@ -153,6 +153,9 @@ class Database:
     def connect(self, write: bool = False):
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
+        # With WAL, NORMAL cannot corrupt the database; a power cut can lose the last few commits. FULL would sync
+        # the disk on every commit, which takes seconds per request on a disk shared with training jobs.
+        conn.execute("PRAGMA synchronous=NORMAL")
         try:
             if write:
                 conn.execute("BEGIN IMMEDIATE")
