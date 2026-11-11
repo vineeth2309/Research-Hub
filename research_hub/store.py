@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
+
 from .accounts import Accounts
 from .charts import Charts
 from .core import Core
+from .designs import Designs, _words
 from .evals import Evals
 from .graphs import Graphs
 from .runs import Runs
 from .social import Social
 
 
-class Store(Core, Accounts, Runs, Charts, Graphs, Evals, Social):
+class Store(Core, Accounts, Runs, Charts, Graphs, Designs, Evals, Social):
     def reindex(self) -> int:
         """Rebuild the full-text index from the tables."""
         n = 0
@@ -22,6 +25,11 @@ class Store(Core, Accounts, Runs, Charts, Graphs, Evals, Social):
                 n += 1
             for p in conn.execute("SELECT slug, project, title, body FROM posts").fetchall():
                 self._index(conn, f"post:{p['slug']}", p["project"], "post", p["title"], p["body"])
+                n += 1
+            for d in conn.execute("SELECT d.slug, d.project, d.title, d.description, r.payload FROM designs d JOIN "
+                                  "design_revisions r ON r.design=d.slug AND r.rev=d.rev").fetchall():
+                self._index(conn, f"design:{d['slug']}", d["project"], "design", d["title"],
+                            f"{d['description']}\n{_words(json.loads(d['payload']))}")
                 n += 1
             for c in conn.execute("SELECT id, target, kind, body FROM comments").fetchall():
                 self._index(conn, f"comment:{c['id']}", self._project_of(conn, c["target"]), "comment",

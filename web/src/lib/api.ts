@@ -77,6 +77,17 @@ export interface ChartData extends ChartSpec { name: string; step: number | null
 export interface SharedChart { name: string; kind: ChartKind; title: string; runs: string[] }
 export interface GraphNode { id: string; kind: "input" | "module" | "op" | "loss"; name: string; type: string; group?: string; detail?: string; params?: number; in_shapes?: (number[] | null)[]; out_shape?: number[] | null; act_mean?: number | null; act_std?: number | null; grad_norm?: number | null; loss?: string; value?: number | null; dtype?: string }
 export interface ModelGraphData { name: string; model: string; params: number; trainable?: number; nodes: GraphNode[]; edges: { from: string; to: string; shape?: number[] | null }[]; blocks?: Record<string, string> }
+export type DesignKind = "box" | "group" | "text";
+export interface DesignNode { id: string; kind: DesignKind; label: string; detail?: string; color?: string; group?: string; x: number; y: number; w: number; h: number }
+export interface DesignEdge { from: string; to: string; label?: string; dashed?: boolean }
+export interface DesignGraph { nodes: DesignNode[]; edges: DesignEdge[] }
+export interface DesignRow { slug: string; title: string; description: string; owner: string; rev: number; created: string; updated: string; author: string; note: string; n_nodes: number; open_proposals: number; open_comments: number }
+export interface DesignProposal { id: number; base_rev: number; author: string; note: string; status: string; created: string; decided_by: string }
+export interface Design {
+  slug: string; project: string; title: string; description: string; owner: string; rev: number; head: number; author: string; note: string; saved: string; created: string; updated: string;
+  graph: DesignGraph; history: { rev: number; author: string; note: string; n_nodes: number; created: string }[]; proposals: DesignProposal[]; comments: Comment[];
+  runs: { slug: string; title: string; owner: string; status: string; dst: string }[];
+}
 export type Series = [number, number][];
 export type Metrics = Record<string, Series>;
 export interface Post { slug: string; project?: string; topic: string; owner: string; kind: string; basis: string; title: string; body: string; revision: number; created: string; updated: string; comment_count?: number; refs: string[]; referenced_by?: string[]; citations?: { title: string; url: string; venue: string }[]; comments?: Comment[] }
@@ -98,6 +109,7 @@ export const refHref = (ref: string, project: string): string => {
   if (kind === "run") return `${base}/runs/${key}`;
   if (kind === "sample") return `${base}/runs/${key.split("/")[0]}/samples`;
   if (kind === "post") return `${base}/post/${key}`;
+  if (kind === "design") return `${base}/designs/${key.split("@")[0]}`;
   if (kind === "topic") return `${base}/research/${key}`;
   if (kind === "comment") return `${base}/feedback`;
   if (kind === "message") return `${base}/messages`;

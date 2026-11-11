@@ -15,7 +15,7 @@ from .db import Database
 
 SLUG = re.compile(r"[a-z0-9][a-z0-9._-]{0,99}")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
-REF = re.compile(r"(run|post|artifact|message|comment|topic|category|sample):([A-Za-z0-9._@:/-]{1,200})")
+REF = re.compile(r"(run|post|artifact|message|comment|topic|category|sample|design):([A-Za-z0-9._@:/-]{1,200})")
 MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,39})")
 DATASET_REF = re.compile(r"[a-z0-9][a-z0-9._-]{0,99}@[A-Za-z0-9._-]{1,40}")
 
@@ -134,7 +134,7 @@ class Core:
     def _owner_of(self, conn, ref: str) -> str | None:
         m = REF.fullmatch(ref or "")
         if not m:
-            raise HubError(f"ref must look like run:<slug>, post:<slug>, artifact:<id>, message:<id>, got {ref!r}")
+            raise HubError(f"ref must look like run:<slug>, post:<slug>, design:<slug>, artifact:<id>, message:<id>, got {ref!r}")
         kind, key = m.groups()
         query = {
             "run": "SELECT owner FROM runs WHERE slug=?",
@@ -145,9 +145,12 @@ class Core:
             "topic": "SELECT created_by FROM topics WHERE slug=?",
             "category": "SELECT created_by FROM categories WHERE slug=?",
             "sample": "SELECT r.owner FROM runs r WHERE slug=?",
+            "design": "SELECT owner FROM designs WHERE slug=?",
         }[kind]
         if kind == "sample":  # sample:<run>/<set>/<id>
             key = key.split("/", 1)[0]
+        if kind == "design":  # design:<slug> or design:<slug>@<rev>
+            key = key.split("@", 1)[0]
         row = conn.execute(query, (key,)).fetchone()
         if not row:
             raise NotFound(f"{ref} does not exist")
@@ -164,6 +167,8 @@ class Core:
             row = conn.execute("SELECT r.project FROM artifacts a JOIN runs r ON r.slug=a.run WHERE a.id=?", (key,)).fetchone()
         elif kind == "message":
             row = conn.execute("SELECT project FROM messages WHERE id=?", (key,)).fetchone()
+        elif kind == "design":
+            row = conn.execute("SELECT project FROM designs WHERE slug=?", (key.split("@", 1)[0],)).fetchone()
         elif kind == "comment":
             row = conn.execute("SELECT target FROM comments WHERE id=?", (key,)).fetchone()
             return self._project_of(conn, row[0]) if row else ""
@@ -176,6 +181,8 @@ class Core:
         with self.connect() as conn:
             if kind == "proposal":
                 row = conn.execute("SELECT project FROM handbook_proposals WHERE id=?", (key,)).fetchone()
+            elif kind == "design_proposal":
+                row = conn.execute("SELECT project FROM design_proposals WHERE id=?", (key,)).fetchone()
             elif kind == "claim":
                 row = conn.execute("SELECT project FROM claims WHERE resource=?", (key,)).fetchone()
             elif kind == "ref":
@@ -263,6 +270,8 @@ class Core:
                 conn.execute("DELETE FROM links WHERE src=? OR dst=?", (ref, ref))
                 conn.execute("DELETE FROM post_revisions WHERE slug=?", (post,))
                 conn.execute("DELETE FROM citations WHERE post=?", (post,))
+            for design in [r[0] for r in conn.execute("SELECT slug FROM designs WHERE project=?", (slug_,))]:
+                self._purge_design(conn, design)
             conn.execute("DELETE FROM comments WHERE target IN (SELECT 'message:' || id FROM messages WHERE project=?)", (slug_,))
             conn.execute("DELETE FROM mentions WHERE message_id IN (SELECT id FROM messages WHERE project=?)", (slug_,))
             conn.execute("DELETE FROM eval_facts WHERE item IN (SELECT i.id FROM eval_items i JOIN eval_sets s "
@@ -463,7 +472,8 @@ class Core:
             seen_rev = json.loads(me["handbook_seen"])
             owned = ("SELECT 'run:'||slug FROM runs WHERE owner=:n UNION SELECT 'post:'||slug FROM posts WHERE owner=:n "
                      "UNION SELECT 'artifact:'||a.id FROM artifacts a JOIN runs r ON r.slug=a.run WHERE r.owner=:n "
-                     "UNION SELECT 'message:'||id FROM messages WHERE author=:n")
+                     "UNION SELECT 'message:'||id FROM messages WHERE author=:n "
+                     "UNION SELECT 'design:'||slug FROM designs WHERE owner=:n")
             feedback = rows(conn.execute(
                 f"SELECT c.*, p.kind AS author_kind FROM comments c LEFT JOIN participants p ON p.name=c.author "
                 f"WHERE c.parent_id IS NULL AND c.status='open' AND c.author!=:n AND c.target IN ({owned}) "
@@ -491,11 +501,25 @@ class Core:
                 proposals = [p for p in rows(conn.execute(
                     "SELECT id, project, base_rev, author, note, created FROM handbook_proposals WHERE status='open'"))
                     if p["project"] in projects and rank(self._role(conn, actor, p["project"])) >= rank("maintainer")]
+            seen = {"n": name, "seen": me["inbox_seen_at"]}
+            designs = [d for d in rows(conn.execute(
+                "SELECT d.slug, d.project, d.title, d.rev, r.author, r.note, r.created FROM designs d JOIN design_revisions r "
+                "ON r.design=d.slug AND r.rev=d.rev WHERE r.author!=:n AND r.created>:seen ORDER BY r.created", seen))
+                if d["project"] in projects]
+            design_proposals = []
+            if actor.get("kind") == "human":
+                design_proposals = [p for p in rows(conn.execute(
+                    "SELECT id, design, project, base_rev, author, note, created FROM design_proposals WHERE status='open'"))
+                    if p["project"] in projects and rank(self._role(conn, actor, p["project"])) >= rank("member")]
+            decisions = rows(conn.execute(
+                "SELECT id, design, project, status, decided_by, note FROM design_proposals WHERE author=:n "
+                "AND status!='open' AND decided>:seen ORDER BY id", seen))
             stale = rows(conn.execute(
                 "SELECT slug, project, status, updated FROM runs WHERE owner=? AND status='running' AND updated<?",
                 (name, (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(timespec="seconds"))))
             return {"participant": name, "handbooks": handbooks, "feedback": feedback, "replies": replies,
                     "mentions": mentions, "thread_replies": thread_replies, "handbook_proposals": proposals,
+                    "designs": designs, "design_proposals": design_proposals, "design_decisions": decisions,
                     "stale_runs": stale}
 
     def ack_inbox(self, actor) -> None:

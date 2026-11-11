@@ -205,6 +205,9 @@ class Api:
                 c.body.get("proposal_id")), "project", "maintainer"),
             R("POST", "/api/handbook/proposals", lambda c: s.propose_handbook(
                 c.actor, c.project, c.body.get("text"), c.body.get("note")), "project", "member"),
+            R("GET", "/api/designs", lambda c: s.designs(c.project), "project", "viewer"),
+            R("POST", "/api/designs", lambda c: s.create_design(c.actor, c.project, c.body), "project", "member"),
+            R("POST", "/api/designs/layout", lambda c: s.layout_design(c.body.get("graph")), "user"),
             R("GET", "/api/claims", lambda c: s.claims(c.project), "project", "viewer"),
             R("POST", "/api/claims", lambda c: s.claim(
                 c.actor, c.project, c.body.get("resource"), c.body.get("note", ""), c.body.get("hours", 24)),
@@ -260,6 +263,15 @@ class Api:
             R("GET", "/api/handbook/proposals/(\\d+)", lambda c: s.handbook_proposal(c.m[0]), "proposal", "viewer"),
             R("POST", "/api/handbook/proposals/(\\d+)/reject", lambda c: s.reject_proposal(c.actor, c.m[0]),
               "proposal", "maintainer"),
+            R("GET", "/api/designs/([^/]+)", lambda c: s.design(c.m[0], c.q.get("rev")), "design", "viewer"),
+            R("PUT", "/api/designs/([^/]+)", lambda c: s.save_design(c.actor, c.m[0], c.body), "design", "member"),
+            R("DELETE", "/api/designs/([^/]+)", lambda c: s.delete_design(c.actor, c.m[0], c.q.get("confirm")),
+              "design", "member"),
+            R("POST", "/api/designs/([^/]+)/proposals", lambda c: s.propose_design(
+                c.actor, c.m[0], c.body.get("graph"), c.body.get("note")), "design", "member"),
+            R("GET", "/api/design-proposals/(\\d+)", lambda c: s.design_proposal(c.m[0]), "design_proposal", "viewer"),
+            R("POST", "/api/design-proposals/(\\d+)/reject", lambda c: s.reject_design_proposal(c.actor, c.m[0]),
+              "design_proposal", "member"),
             R("DELETE", "/api/claims/(.+)", lambda c: s.release(c.actor, c.m[0]) or {"ok": True}, "claim", "member"),
         ]
 

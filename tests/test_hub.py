@@ -612,6 +612,130 @@ def test_model_graph_from_one_training_step(site, monkeypatch):
     assert [m["name"] for m in site.ada.get(f"/api/runs/{run.slug}")["model_graphs"]] == ["by-hand", "folded", "model"]
 
 
+def test_designs_drawn_by_people_and_proposed_by_agents(site, monkeypatch, capsys, tmp_path):
+    from research_hub import mcp
+
+    ada, agent = site.hub(site.ada.token, "detectors"), site.agent("agent-a", project="detectors")
+
+    def inside(node, group):
+        return (group["x"] <= node["x"] and node["x"] + node["w"] <= group["x"] + group["w"]
+                and group["y"] <= node["y"] and node["y"] + node["h"] <= group["y"] + group["h"])
+
+    def apart(a, b):
+        return a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"] or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"]
+
+    # a person draws a board: it is stored as drawn
+    drawn = {"nodes": [{"id": "image", "label": "Image\n518 x 518", "x": 0, "y": 0, "w": 160, "h": 60},
+                       {"id": "backbone", "label": "DINOv2 ViT-B/14", "detail": "LoRA r=16", "color": "blue",
+                        "x": 0, "y": 140, "w": 200, "h": 60}],
+             "edges": [{"from": "image", "to": "backbone", "label": "B,3,518,518"}]}
+    ada.post("/api/designs", {"slug": "stage1", "title": "Stage 1", "graph": drawn})
+    first = ada.get("/api/designs/stage1")
+    assert first["rev"] == 1 and first["owner"] == "ada" and first["graph"] == drawn | {
+        "nodes": [{**n, "kind": "box"} for n in drawn["nodes"]]}
+    for bad, why in (({"nodes": [{"id": "a"}], "edges": [{"from": "a", "to": "zz"}]}, "between two different nodes"),
+                     ({"nodes": [{"id": "a"}, {"id": "b", "group": "a"}], "edges": []}, "is not a group"),
+                     ({"nodes": [{"id": "a"}, {"id": "a"}], "edges": []}, "unique id"),
+                     ({"nodes": [{"id": "a", "x": 3}], "edges": []}, "both x and y")):
+        with denied(why):
+            ada.post("/api/designs", {"slug": "broken", "title": "x", "graph": bad})
+
+    # an agent reads it, cannot save it, and proposes a change; what it adds without positions is placed for it
+    with denied("agents propose"):
+        agent.put("/api/designs/stage1", {"graph": drawn, "note": "mine now"})
+    change = agent.get("/api/designs/stage1")["graph"]
+    change["nodes"] += [{"id": "heads", "kind": "group", "label": "Heads"}, {"id": "mask", "label": "Mask decoder", "group": "heads"},
+                        {"id": "severity", "label": "Severity head", "group": "heads"}]
+    change["edges"] += [{"from": "backbone", "to": "mask"}, {"from": "backbone", "to": "severity", "dashed": True}]
+    pid = agent.post("/api/designs/stage1/proposals", {"graph": change, "note": "add the two heads"})["id"]
+    proposed = {n["id"]: n for n in ada.get(f"/api/design-proposals/{pid}")["graph"]["nodes"]}
+    assert (proposed["backbone"]["x"], proposed["backbone"]["y"]) == (0, 140)  # what was drawn stays where it was
+    assert inside(proposed["mask"], proposed["heads"]) and inside(proposed["severity"], proposed["heads"])
+    assert apart(proposed["mask"], proposed["severity"]) and proposed["mask"]["y"] >= 200
+    with denied("nothing to propose"):
+        agent.post("/api/designs/stage1/proposals", {"graph": first["graph"], "note": "same"})
+
+    # the person sees it waiting, accepts it as the next revision, and the agent is told
+    assert [p["id"] for p in ada.get("/api/inbox")["design_proposals"]] == [pid]
+    with denied("agents propose"):
+        agent.post(f"/api/design-proposals/{pid}/reject")
+    with denied("you edited rev 0"):
+        ada.put("/api/designs/stage1", {"graph": change, "note": "late", "expected_rev": 0})
+    accepted = ada.get(f"/api/design-proposals/{pid}")["graph"]
+    assert ada.put("/api/designs/stage1", {"graph": accepted, "note": "accept heads", "expected_rev": 1, "proposal_id": pid})["rev"] == 2
+    box = agent.get("/api/inbox")
+    assert [(d["slug"], d["rev"], d["author"]) for d in box["designs"]] == [("stage1", 2, "ada")]
+    assert [(p["id"], p["status"], p["decided_by"]) for p in box["design_decisions"]] == [(pid, "accepted", "ada")]
+    assert "stage1 is at rev 2" in mcp.call(agent, "inbox", {})[0]["text"]
+
+    # a proposal drawn against an older revision is not accepted blindly; it can be rejected
+    stale = json.loads(json.dumps(accepted))
+    stale["nodes"].append({"id": "loss", "label": "Dice + BCE"})
+    stale["edges"].append({"from": "mask", "to": "loss"})
+    pid2 = mcp.call(agent, "design_propose", {"design": "stage1", "graph": stale, "note": "add the loss"})[0]["text"].split()[1]
+    moved = json.loads(json.dumps(accepted))
+    moved["nodes"][0]["x"] = 400
+    assert ada.put("/api/designs/stage1", {"graph": moved, "note": "move the input", "expected_rev": 2})["rev"] == 3
+    proposal = ada.get(f"/api/design-proposals/{pid2}")
+    with denied("would undo the changes since"):
+        ada.put("/api/designs/stage1", {"graph": proposal["graph"], "note": "accept", "proposal_id": int(pid2)})
+    assert ada.post(f"/api/design-proposals/{pid2}/reject")["status"] == "rejected"
+    latest = ada.get("/api/designs/stage1")
+    assert [h["rev"] for h in latest["history"]] == [3, 2, 1] and latest["head"] == 3
+    assert {p["id"]: p["status"] for p in latest["proposals"]} == {pid: "accepted", int(pid2): "rejected"}
+    assert len(ada.get("/api/designs/stage1", rev=1)["graph"]["nodes"]) == 2  # earlier revisions stay readable
+
+    # comments name a node and reach the owner; a run can say which revision it implements; search finds the text
+    agent.post("/api/comments", {"target": "design:stage1", "kind": "question", "anchor": "node: backbone", "body": "Frozen or LoRA?"})
+    assert [(c["target"], c["anchor"]) for c in ada.get("/api/inbox")["feedback"]] == [("design:stage1", "node: backbone")]
+    monkeypatch.setenv("HUB_AGENT", "agent-a")
+    monkeypatch.setenv("HUB_PROJECT", "detectors")
+    hubclient.init("stage1-first", motivated_by=["design:stage1@3"]).finish("done")
+    latest = ada.get("/api/designs/stage1")
+    assert [(r["slug"], r["dst"]) for r in latest["runs"]] == [("stage1-first", "design:stage1@3")]
+    assert len(latest["comments"]) == 1
+    assert "design:stage1" in [r["ref"] for r in ada.get("/api/search", q="DINOv2")]
+
+    # an agent starts its own board from connections alone: rows follow the arrows, groups hold their members
+    flow = {"nodes": [{"id": "data", "label": "Loader"}, {"id": "model", "kind": "group", "label": "Model"},
+                      {"id": "enc", "label": "Encoder", "group": "model"}, {"id": "dec", "label": "Decoder", "group": "model"},
+                      {"id": "loss", "label": "Loss", "color": "red"}, {"id": "note", "kind": "text", "label": "one step"}],
+            "edges": [{"from": "data", "to": "enc"}, {"from": "enc", "to": "dec", "label": "tokens"}, {"from": "dec", "to": "loss"},
+                      {"from": "loss", "to": "enc", "label": "gradients", "dashed": True}]}
+    (tmp_path / "flow.json").write_text(json.dumps(flow))
+    cli(["design", "create", "train-step", "--title", "One training step", "--file", str(tmp_path / "flow.json")])
+    capsys.readouterr()
+    cli(["design", "get", "train-step"])
+    outline = capsys.readouterr().out
+    assert "model [group] Model\n    enc [box] Encoder" in outline and "enc -> dec: tokens" in outline
+    assert "loss -> enc: gradients (dashed)" in outline and "hub design propose train-step" in outline
+    cli(["design", "get", "train-step", "--json"])
+    placed = json.loads(capsys.readouterr().out)
+    at = {n["id"]: n for n in placed["nodes"]}
+    assert at["data"]["y"] < at["model"]["y"] < at["loss"]["y"] and at["enc"]["y"] < at["dec"]["y"]  # the loop back is ignored
+    assert inside(at["enc"], at["model"]) and inside(at["dec"], at["model"])
+    leaves = [n for n in placed["nodes"] if n["kind"] != "group"]
+    assert all(apart(a, b) for i, a in enumerate(leaves) for b in leaves[i + 1:])
+    assert all(apart(n, at["model"]) for n in leaves if n.get("group") != "model")
+    assert "train-step: One training step (rev 1, 6 nodes, by agent-a)" in mcp.call(agent, "design_list", {})[0]["text"]
+    tidy = ada.post("/api/designs/layout", {"graph": moved})  # the editor's "tidy" button: positions from connections
+    assert {n["id"]: n["x"] for n in tidy["nodes"]}["image"] != 400 and len(tidy["nodes"]) == len(moved["nodes"])
+
+    # only a person deletes, after confirming the name; deleting the project takes the rest with it
+    with denied("can delete it"):
+        agent.request("DELETE", "/api/designs/train-step", query={"confirm": "train-step"})
+    with denied("confirm=stage1"):
+        ada.request("DELETE", "/api/designs/stage1")
+    assert ada.request("DELETE", "/api/designs/stage1", query={"confirm": "stage1"})["revisions"] == 3
+    with denied("not found"):
+        ada.get("/api/designs/stage1")
+    assert not ada.get("/api/comments", status="open")["total"] and not ada.get("/api/runs/stage1-first")["links"]
+    ada.request("DELETE", "/api/projects/detectors", query={"confirm": "detectors"})
+    with site.store.connect() as conn:
+        assert not conn.execute("SELECT COUNT(*) FROM designs").fetchone()[0]
+        assert not conn.execute("SELECT COUNT(*) FROM design_revisions").fetchone()[0]
+
+
 def test_projects_handbook_feedback_and_chat(site, capsys):
     a, b, ada = site.agent("agent-a"), site.agent("agent-b"), site.hub(site.ada.token, "research")
     a.post("/api/runs", {"slug": "r1", "title": "r1", **STRICT})

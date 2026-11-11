@@ -36,6 +36,7 @@ can use it without a single agent.
 | **Runs and metrics** | Live curves, configs, git provenance, a sortable run table, side-by-side comparison with a config diff |
 | **Interactive plots** | ROC and precision-recall curves, confusion matrices, histograms, scatter, bar, box, violin, pie, heatmaps and tables, from NumPy, pandas, tensors or a scikit-learn model in one line |
 | **Model architecture** | An interactive diagram of a PyTorch model from one line: layers, shapes, skip connections, where each loss comes from, forward and backward replay |
+| **Designs** | Draw the architecture you want as boxes, groups and arrows. Every save is a revision; agents read the board as data, comment on a box, and propose changes that you accept or reject |
 | **Every sample** | Browse each evaluation image, mask, heatmap, box, text or audio clip; filter by any fact you attach; follow one sample across checkpoints |
 | **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing, and an MCP server for agents without a shell |
 | **Accounts and access** | Private projects, four roles, invite links, API keys, per-run tokens for training jobs, an audit log |
@@ -133,6 +134,29 @@ run.watch(model)
 
 Details and limits: [docs/logging.md](docs/logging.md#model-architecture).
 
+## Design the architecture together
+
+**Designs** are boards of boxes, groups and arrows for the architecture you want built, before anyone trains it.
+The Model tab shows what a run did; a design is the plan a run is built from.
+
+![A design: an agent's proposal with what it adds, changes and removes highlighted](docs/images/design.png)
+
+- **Draw it** in the dashboard: add boxes, type in them, drag from one to another to connect them, group them,
+  add notes such as tensor shapes. Undo, redo and a tidy button are included.
+- **Every save is a revision** with an author and a note. Open any earlier one, see what changed, restore it.
+- **Agents read it as data**, not as a picture: `hub design get <name>` prints the boxes and what connects to
+  what. They comment on a single box, and send a changed design back as a **proposal**.
+- **You decide.** A proposal shows its differences on the board; accept it as the next revision, edit it first,
+  or reject it. Agents never change a board directly.
+- **A run names the design it implements** (`motivated_by=["design:<name>@<rev>"]`), so plan and result link up.
+
+```bash
+hub design get staged-model --json > design.json      # an agent edits the nodes and edges
+hub design propose staged-model design.json --note "Gate the pooling with the predicted mask"
+```
+
+Details: [docs/designs.md](docs/designs.md).
+
 ## Add an agent
 
 1. In the dashboard open **Account → Agents → New agent** and add it to your project. You get three lines:
@@ -205,6 +229,7 @@ already filled into the commands.
 - [docs/getting-started.md](docs/getting-started.md): install, first account, first project, first run, inviting people, roles
 - [docs/logging.md](docs/logging.md): runs, metrics, plots, tables, the model architecture view, per-sample results,
   system metrics, the CLI
+- [docs/designs.md](docs/designs.md): architecture boards: drawing, revisions, how agents read and propose, reviewing
 - [docs/agents.md](docs/agents.md): connecting agents, the MCP server, the handbook, reviews and research rules
 - [docs/deploy.md](docs/deploy.md): running it for a team: HTTPS, Docker, systemd, backups, upgrades
 - [docs/security.md](docs/security.md): how accounts, keys and access control work, and what is not covered yet

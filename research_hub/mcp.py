@@ -13,7 +13,7 @@ import json
 import sys
 
 from . import __version__
-from .cli import _fmt_inbox, _fmt_run, _fmt_runs, _fmt_samples
+from .cli import _fmt_design, _fmt_inbox, _fmt_run, _fmt_runs, _fmt_samples
 from .client import Hub, HubRequestError
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -33,6 +33,9 @@ def _schema(required=(), **properties):
 
 
 RUN = _s("Run name (slug)")
+DESIGN = {"type": "object", "description": (
+    "{nodes: [{id, kind: box|group|text, label, detail?, color?: blue|green|amber|red|violet, group?: <group id>}], "
+    "edges: [{from, to, label?, dashed?}]}. Leave x, y, w, h off nodes you add.")}
 TOOLS = {
     "inbox": ("What is waiting for you: open feedback on your runs, replies, @mentions and handbook changes.",
               _schema(ack={"type": "boolean", "description": "Mark mentions and replies as seen"})),
@@ -64,8 +67,8 @@ TOOLS = {
                              step={"type": "integer", "description": "Checkpoint step (default: the latest)"},
                              layers={"type": "array", "items": {"type": "string"},
                                      "description": "Layer names to show (default: the first three)"})),
-    "comment": ("Comment on a run, post, sample or message. Replies answer a comment by its id.",
-                _schema(["target", "body"], target=_s("run:<name>, post:<name>, sample:<run>/<set>/<sample> or message:<id>"),
+    "comment": ("Comment on a run, post, design, sample or message. Replies answer a comment by its id.",
+                _schema(["target", "body"], target=_s("run:<name>, post:<name>, design:<name>, sample:<run>/<set>/<sample> or message:<id>"),
                         body=_s("Markdown"), kind=_s("note (default), question, request, objection, support or response"),
                         reply_to={"type": "integer", "description": "Id of the comment being answered"},
                         anchor=_s("What exactly it is about, e.g. 'chart: val/loss, step 1100'"))),
@@ -79,6 +82,19 @@ TOOLS = {
     "msg_send": ("Post to a chat channel. @name reaches that account's inbox.",
                  _schema(["body"], channel=_s("Channel (default general)"), body=_s("Markdown"),
                          reply_to={"type": "integer", "description": "Message id to thread under"})),
+    "design_list": ("Architecture boards of the project: boxes, groups and arrows that people and agents draw together.",
+                    _schema()),
+    "design_get": ("One design as an outline of its nodes and connections, with open proposals and comments. Set "
+                   "json to get the nodes and edges to edit.",
+                   _schema(["design"], design=_s("Design name (slug)"), json={"type": "boolean"},
+                           rev={"type": "integer", "description": "An earlier revision (default: the latest)"})),
+    "design_create": ("Start a new design. Nodes without x and y are laid out for you.",
+                      _schema(["design", "title", "graph"], design=_s("New design name (slug)"), title=_s("Title"),
+                              description=_s("What it is for"), graph=DESIGN)),
+    "design_propose": ("Propose a changed design as its next revision. A person accepts or rejects it. Send the whole "
+                       "design, starting from design_get with json.",
+                       _schema(["design", "graph", "note"], design=_s("Design name (slug)"), graph=DESIGN,
+                               note=_s("What changes and why"))),
     "search": ("Full-text search across runs, posts, comments and messages in the project.", _schema(["q"], q=_s("Words to find"))),
 }
 
@@ -167,6 +183,19 @@ def call(hub: Hub, name: str, a: dict) -> list[dict]:
     if name == "msg_send":
         m = hub.post(f"/api/channels/{a.get('channel', 'general')}/messages", {"body": a["body"], "parent_id": a.get("reply_to")})
         return [_text(f"Message {m['id']} sent to #{a.get('channel', 'general')}.")]
+    if name == "design_list":
+        return [_text("\n".join(f"{d['slug']}: {d['title']} (rev {d['rev']}, {d['n_nodes']} nodes, by {d['owner']})"
+                                for d in hub.get("/api/designs")) or "No designs yet.")]
+    if name == "design_get":
+        d = hub.get(f"/api/designs/{a['design']}", rev=a.get("rev"))
+        return [_text(d["graph"] if a.get("json") else _fmt_design(d))]
+    if name == "design_create":
+        d = hub.post("/api/designs", {"slug": a["design"], "title": a["title"], "description": a.get("description", ""),
+                                      "graph": a["graph"]})
+        return [_text(f"Design {d['slug']} created with {d['nodes']} nodes.")]
+    if name == "design_propose":
+        p = hub.post(f"/api/designs/{a['design']}/proposals", {"graph": a["graph"], "note": a["note"]})
+        return [_text(f"Proposal {p['id']} on {a['design']} (rev {p['base_rev']}) is waiting for a person.")]
     if name == "search":
         hits = hub.get("/api/search", q=a["q"])
         return [_text("\n".join(f"{r['kind']:<9} {r['ref']:<44} {r['title']}\n          {r['snippet']}" for r in hits) or "No matches.")]

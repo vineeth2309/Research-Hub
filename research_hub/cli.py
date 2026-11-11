@@ -54,10 +54,55 @@ def _fmt_inbox(box):
     if box.get("stale_runs"):
         lines.append("\nRUNS WITH NO UPDATE FOR 6h (close them or log progress):")
         lines += [f"  {r['slug']} last update {r['updated']}" for r in box["stale_runs"]]
+    if box.get("designs"):
+        lines.append("\nDESIGNS CHANGED (read with `hub design get <name>`):")
+        lines += [f"  {d['slug']} is at rev {d['rev']}, by {d['author']}: {d['note']}" for d in box["designs"]]
+    if box.get("design_decisions"):
+        lines.append("\nYOUR DESIGN PROPOSALS WERE DECIDED:")
+        lines += [f"  proposal {p['id']} on {p['design']} was {p['status']} by {p['decided_by']}" for p in box["design_decisions"]]
+    if box.get("design_proposals"):
+        lines.append("\nDESIGN PROPOSALS AWAITING A PERSON:")
+        lines += [f"  proposal {p['id']} on {p['design']} by {p['author']}: {p['note']}" for p in box["design_proposals"]]
     if box.get("handbook_proposals"):
         lines.append("\nHANDBOOK PROPOSALS AWAITING A MAINTAINER:")
         lines += [f"  proposal {p['id']} ({p['project']}) by {p['author']}: {p['note']}" for p in box["handbook_proposals"]]
     return "\n".join(lines).strip() or "Inbox empty."
+
+
+def _fmt_design(d):
+    """A design as an outline an agent can read: groups, nodes and what connects to what."""
+    by_id = {n["id"]: n for n in d["graph"]["nodes"]}
+    kids = {}
+    for n in d["graph"]["nodes"]:
+        kids.setdefault(n.get("group"), []).append(n)
+    lines = [f"design {d['slug']}: {d['title']}", f"rev {d['rev']} of {d['head']} by {d['author']} ({d['saved']}): {d['note']}"]
+    if d["description"]:
+        lines.append(d["description"])
+
+    def walk(parent, indent):
+        for n in kids.get(parent, []):
+            label = " / ".join(n["label"].split("\n")) or "(no text)"
+            lines.append(f"{indent}{n['id']} [{n['kind']}] {label}" + (f" — {n['detail']}" if n.get("detail") else ""))
+            walk(n["id"], indent + "  ")
+
+    lines.append(f"\nNODES ({len(by_id)}), nested by group:")
+    walk(None, "  ")
+    lines.append(f"\nCONNECTIONS ({len(d['graph']['edges'])}):")
+    lines += [f"  {e['from']} -> {e['to']}" + (f": {e['label']}" if e.get("label") else "") + (" (dashed)" if e.get("dashed") else "")
+              for e in d["graph"]["edges"]]
+    waiting = [p for p in d["proposals"] if p["status"] == "open"]
+    if waiting:
+        lines.append("\nOPEN PROPOSALS:")
+        lines += [f"  #{p['id']} by {p['author']} on rev {p['base_rev']}: {p['note']}" for p in waiting]
+    roots = [c for c in d["comments"] if not c["parent_id"] and c["status"] == "open"]
+    if roots:
+        lines.append("\nOPEN COMMENTS:")
+        lines += [f"  #{c['id']} {c['author']} {c['kind']}" + (f" [{c['anchor']}]" if c["anchor"] else "") + f": {c['body']}" for c in roots]
+    if d["runs"]:
+        lines.append("\nRUNS BUILT FROM IT: " + ", ".join(f"{r['slug']} ({r['status']})" for r in d["runs"]))
+    lines.append(f"\nTo change it: `hub design get {d['slug']} --json > d.json`, edit nodes and edges (leave x/y off new "
+                 f"nodes; they are placed for you), then `hub design propose {d['slug']} d.json --note \"why\"`.")
+    return "\n".join(lines)
 
 
 def _fmt_runs(runs):
@@ -501,6 +546,37 @@ def cmd_mcp(a, hub):
     serve(hub)
 
 
+def cmd_design(a, hub):
+    if a.sub == "list":
+        for d in hub.get("/api/designs"):
+            waiting = f"  {d['open_proposals']} proposals" if d["open_proposals"] else ""
+            print(f"{d['slug']:<32} rev {d['rev']:<3} {d['n_nodes']:>3} nodes  {d['owner']:<16} {d['title']}{waiting}")
+    elif a.sub == "get":
+        if a.proposal:
+            p = hub.get(f"/api/design-proposals/{a.proposal}")
+            d = {**hub.get(f"/api/designs/{p['design']}"), "graph": p["graph"], "author": p["author"], "note": p["note"],
+                 "saved": p["created"], "rev": f"proposal {p['id']} on rev {p['base_rev']}"}
+        elif a.slug:
+            d = hub.get(f"/api/designs/{a.slug}", rev=a.rev)
+        else:
+            raise SystemExit("give a design name, or --proposal ID")
+        _out(d["graph"] if a.json else _fmt_design(d))
+    elif a.sub == "create":
+        _out(hub.post("/api/designs", {"slug": a.slug, "title": a.title or a.slug, "description": a.description,
+                                       "graph": _json_file(a.file) if a.file else None, "note": a.note}))
+    elif a.sub == "propose":
+        _out(hub.post(f"/api/designs/{a.slug}/proposals", {"graph": _json_file(a.file), "note": a.note}))
+    elif a.sub == "save":
+        current = hub.get(f"/api/designs/{a.slug}")
+        graph = hub.get(f"/api/design-proposals/{a.accept}")["graph"] if a.accept else _json_file(a.file)
+        _out(hub.put(f"/api/designs/{a.slug}", {"graph": graph, "note": a.note or f"Accepted proposal {a.accept}",
+                                                "expected_rev": current["head"], "proposal_id": a.accept}))
+    elif a.sub == "reject":
+        _out(hub.post(f"/api/design-proposals/{a.id}/reject"))
+    else:
+        _delete(a, hub, "design", f"/api/designs/{a.slug}")
+
+
 def cmd_claim(a, hub):
     if a.release:
         hub.delete(f"/api/claims/{a.resource}")
@@ -763,7 +839,7 @@ def build_parser():
     s.set_defaults(fn=cmd_post_get)
 
     s = sub.add_parser("comment", help="comment on a run, post, artifact, message or sample")
-    s.add_argument("--on", required=True, help="run:<slug> | post:<slug> | artifact:<id> | message:<id> | sample:<run>/<set>/<id>")
+    s.add_argument("--on", required=True, help="run:<slug> | post:<slug> | design:<slug> | artifact:<id> | message:<id> | sample:<run>/<set>/<id>")
     s.add_argument("--kind", default="note", choices=["note", "question", "request", "objection", "support", "response"])
     s.add_argument("--anchor", help="what exactly: 'chart: val/auroc', 'config', 'step 11000'")
     s.add_argument("--body")
@@ -790,6 +866,35 @@ def build_parser():
     s.set_defaults(fn=cmd_msg_read)
     sub.add_parser("mcp", help="serve the hub to an agent as MCP tools over stdio (for agents without a shell)"
                    ).set_defaults(fn=cmd_mcp)
+    design = sub.add_parser("design", help="architecture boards: boxes, groups and arrows, with revisions and proposals")
+    ds = design.add_subparsers(dest="sub", required=True)
+    ds.add_parser("list")
+    s = ds.add_parser("get", help="print a design as an outline, or as JSON to edit")
+    s.add_argument("slug", nargs="?")
+    s.add_argument("--rev", type=int, help="an earlier revision (default: the latest)")
+    s.add_argument("--proposal", type=int, metavar="ID", help="show a proposal instead")
+    s.add_argument("--json", action="store_true", help="the nodes and edges, ready to edit and propose")
+    s = ds.add_parser("create", help="start a new design; FILE holds {nodes, edges}")
+    s.add_argument("slug")
+    s.add_argument("--title")
+    s.add_argument("--description", default="")
+    s.add_argument("--file", help="JSON with nodes and edges (default: an empty board)")
+    s.add_argument("--note", default="")
+    s = ds.add_parser("propose", help="propose FILE as the next revision; a person accepts or rejects it")
+    s.add_argument("slug")
+    s.add_argument("file")
+    s.add_argument("--note", required=True, help="what changes and why")
+    s = ds.add_parser("save", help="a person saves FILE as the next revision, or accepts a proposal")
+    s.add_argument("slug")
+    s.add_argument("file", nargs="?")
+    s.add_argument("--accept", type=int, metavar="ID", help="accept this proposal as the next revision")
+    s.add_argument("--note")
+    s = ds.add_parser("reject", help="a person rejects a proposal")
+    s.add_argument("id", type=int)
+    s = ds.add_parser("delete", help="a person deletes a design for good (asks for its name)")
+    s.add_argument("slug")
+    s.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    design.set_defaults(fn=cmd_design)
     s = sub.add_parser("claim", help="claim an idea or resource so others don't duplicate it")
     s.add_argument("resource")
     s.add_argument("--note")

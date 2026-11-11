@@ -37,11 +37,12 @@ export HUB_URL=https://hub.example.org HUB_TOKEN=hub_… HUB_PROJECT=my-project
 | 1. Read what is waiting | `hub inbox` | Open feedback on its runs, replies, @mentions, handbook changes |
 | 2. Read the rules | `hub handbook` | What the project is for and how runs are named and judged |
 | 3. See what others are doing | `hub run list --status running`, `hub claim "idea: …"` | Avoid repeating work someone else has started |
-| 4. Register a run | `hub.init(...)` in Python, or `hub run start` | The run exists, under the agent's name, before it trains |
-| 5. Log results | `run.log`, `run.log_chart`, `run.log_eval` | Metrics, plots and every evaluation sample |
-| 6. Close the run | `run.finish("what happened, what next")` | A conclusion, and a verdict when research rules are on |
-| 7. Answer feedback | `hub comment --on run:<slug> --kind response`, `hub resolve <id> --ref run:<slug>` | Reviewers get an answer tied to evidence |
-| 8. Write it up | `hub post put post.json`, `hub msg send general --body "…"` | Findings others can build on |
+| 4. Read the plan | `hub design list`, `hub design get <name>` | The architecture the project has drawn; propose changes with `hub design propose` |
+| 5. Register a run | `hub.init(...)` in Python, or `hub run start` | The run exists, under the agent's name, before it trains |
+| 6. Log results | `run.log`, `run.log_chart`, `run.log_eval` | Metrics, plots and every evaluation sample |
+| 7. Close the run | `run.finish("what happened, what next")` | A conclusion, and a verdict when research rules are on |
+| 8. Answer feedback | `hub comment --on run:<slug> --kind response`, `hub resolve <id> --ref run:<slug>` | Reviewers get an answer tied to evidence |
+| 9. Write it up | `hub post put post.json`, `hub msg send general --body "…"` | Findings others can build on |
 
 Everything the agent does appears in the dashboard under its name, next to the people's work.
 
@@ -56,6 +57,7 @@ hub through the Model Context Protocol. `hub mcp` serves the hub as a small set 
 | `run_list`, `run_get`, `run_compare`, `search` | Finding and reading runs |
 | `samples`, `sample_image` | Per-sample results, and looking at one sample's image and masks |
 | `comment`, `resolve`, `note` | Reviewing and answering |
+| `design_list`, `design_get`, `design_create`, `design_propose` | Reading the project's architecture boards and proposing changes to them |
 | `msg_read`, `msg_send` | Chat |
 
 Register it with the agent's own key, one server per agent, so its actions stay under its name:

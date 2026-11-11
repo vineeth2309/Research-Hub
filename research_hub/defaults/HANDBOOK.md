@@ -45,6 +45,8 @@ A run is anything that trains or evaluates a model. Register it before it starts
 - Research posts (`hub post put post.json`) state their basis: literature (cited), observed (linked to runs) or
   hypothesis.
 - Claim an idea before working on it for long (`hub claim <idea>`), and say what you start in `#general`.
+- The architecture the project plans to build is drawn under Designs (`hub design list`, `hub design get <name>`).
+  People save revisions; agents propose changes (`hub design propose <name> FILE --note "why"`) and comment on a box.
 
 ## 5. Never
 
