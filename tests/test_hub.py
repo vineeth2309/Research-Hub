@@ -326,6 +326,16 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
     assert timeline["meta"]["size"] == [64, 64]  # kept from the step that sent the image
     with denied("relabelled"):
         run.log_eval([{"sample": "s1", "true": {"class": "dent"}}], step=3000, eval_set=val)
+    # a correction is logged like anything else: null removes a layer or a fact, an empty list removes the boxes
+    assert facets["box_classes"] == ["dent"]
+    run.log_eval([{"sample": "s1", "facts": {"camera": None}, "true": {"masks": {"object": None}},
+                   "pred": {"heatmaps": {"attention": None}}},
+                  {"sample": "d1", "true": {"boxes": []}, "pred": {"boxes": []}, "outcome": "correct"}], step=1000, eval_set=val)
+    cleared = hub.get("/api/runs/multi/eval/sample", set=val, sample="s1")
+    assert set(cleared["static_layers"]) == {"image"} and set(cleared["steps"][0]["layers"]) == {"object"}
+    assert cleared["facts"] == {"site": "north"}
+    d1 = hub.get("/api/runs/multi/eval/sample", set=val, sample="d1")
+    assert "boxes" not in d1["truth"] and d1["steps"][0]["pred"]["boxes"] == [] and d1["steps"][0]["outcome"] == "correct"
     # another run on the same set shares the facts and compares per sample
     other = hubclient.init("multi-b", project="research", title="b", **{**STRICT, "parent": "multi"}, hub=hub)
     other.log_eval([{"sample": "s1", "pred": {"class": "crack"}}, {"sample": "s2", "pred": {"class": "normal"}}],

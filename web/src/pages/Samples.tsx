@@ -16,8 +16,11 @@ const list = (v?: string) => (v ? v.split(",") : []);
 const OUTCOMES = ["missed", "false_alarm", "wrong_class", "mismatch", "correct", "unscored"];
 const MASK_COLORS = [[255, 64, 24], [26, 204, 128], [60, 140, 255], [255, 200, 0], [200, 80, 255], [0, 200, 220], [255, 120, 180], [150, 220, 40]];
 type Kinds = Record<string, "mask" | "heatmap">;
-type View = { show: Record<string, boolean>; op: number; th: number; minScore: number };
-const defaultView: View = { show: {}, op: 0.55, th: 0.2, minScore: 0.3 };
+/** minScore hides predicted boxes below it; classScore overrides it for one class. */
+type View = { show: Record<string, boolean>; op: number; th: number; minScore: number; classScore: Record<string, number> };
+const defaultView: View = { show: {}, op: 0.55, th: 0.2, minScore: 0.3, classScore: {} };
+// boxes are switched on and off like layers; a layer name cannot contain a colon, so these never clash with one
+const TRUE_BOXES = ":true-boxes", PRED_BOXES = ":pred-boxes";
 /** Overlay layers of a sample in a stable order: every layer the run logged, whatever it is called. */
 const layerKeys = (layers: Record<string, string>) => Object.keys(layers).filter((k) => k !== "image" && k !== "audio").sort();
 /** A mask keeps one colour per name across the whole eval set; a heatmap uses the inferno ramp. */
@@ -60,11 +63,11 @@ async function paint(ctx: CanvasRenderingContext2D, x0: number, W: number, H: nu
   const bw = base?.naturalWidth ?? 1, bh = base?.naturalHeight ?? 1;
   const norm = (boxes: (number | string)[][]) => boxes.map((b) => { const n = b.slice(0, 4).map(Number); return n.every((v) => v <= 1) ? [...n, ...b.slice(4)] : [n[0] / bw, n[1] / bh, n[2] / bw, n[3] / bh, ...b.slice(4)]; });
   const draw = (boxes: (number | string)[][], dashed: boolean) => { ctx.lineWidth = 2; for (const b of norm(boxes)) { const [bx, by, w, h] = b as number[]; const label = b[4] as string | undefined, score = b[5] as number | undefined;
-    if (!dashed && score != null && score < view.minScore) continue;
+    if (!dashed && score != null && score < (view.classScore[label ?? ""] ?? view.minScore)) continue;
     ctx.strokeStyle = dashed ? "#ffd400" : labelColor(label ?? ""); ctx.setLineDash(dashed ? [6, 4] : []); ctx.strokeRect(x0 + bx * W, by * H, w * W, h * H);
     if (label != null) { ctx.setLineDash([]); ctx.font = "11px Inter, sans-serif"; const t = `${label}${score != null ? " " + score.toFixed(2) : ""}`; const tw = ctx.measureText(t).width + 6; ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(x0 + bx * W, Math.max(0, by * H - 14), tw, 14); ctx.fillStyle = dashed ? "#000" : "#fff"; ctx.textAlign = "left"; ctx.fillText(t, x0 + bx * W + 3, Math.max(11, by * H - 3)); } } ctx.setLineDash([]); };
-  if (sides.gt && truth.boxes) draw(truth.boxes, true);
-  if (sides.pred && pred.boxes) draw(pred.boxes, false);
+  if (sides.gt && truth.boxes && view.show[TRUE_BOXES] !== false) draw(truth.boxes, true);
+  if (sides.pred && pred.boxes && view.show[PRED_BOXES] !== false) draw(pred.boxes, false);
 }
 
 function Thumb({ row, view, kinds }: { row: SampleRow; view: View; kinds: Kinds }) {
@@ -77,6 +80,34 @@ function Thumb({ row, view, kinds }: { row: SampleRow; view: View; kinds: Kinds 
     return <div className="aspect-square w-full space-y-1 overflow-hidden bg-muted p-2.5 text-[11.5px] leading-snug">{both && <div className="label">true</div>}<div className={both ? "line-clamp-3" : "line-clamp-[9] text-[12.5px]"}>{row.truth.text ?? row.pred.text}</div>{both && <><div className="label">pred</div><div className="line-clamp-3">{row.pred.text}</div></>}</div>;
   }
   return <div className="grid aspect-square w-full place-content-center bg-muted text-center"><div className="font-mono text-[26px] font-medium">{row.pred.value != null ? fmt(row.pred.value) : "—"}</div><div className="text-[11.5px] text-muted-foreground">true {fmt(row.truth.value)}</div></div>;
+}
+
+/** Box switches and the score filter: one minimum for every class, and a separate one for any class that needs it. */
+function BoxControls({ view, updateView, classes }: { view: View; updateView: (v: Partial<View>) => void; classes: string[] }) {
+  const setClass = (c: string, v: number | null) => { const next = { ...view.classScore }; if (v == null) delete next[c]; else next[c] = v; updateView({ classScore: next }); };
+  const toggle = (k: string, label: React.ReactNode) => <Checkbox checked={view.show[k] !== false} onChange={(v) => updateView({ show: { ...view.show, [k]: v } })} label={label} />;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {toggle(TRUE_BOXES, <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border-2 border-dashed" style={{ borderColor: "#d4a900" }} />true boxes</span>)}
+        {toggle(PRED_BOXES, <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border-2 border-primary" />predicted boxes</span>)}
+      </div>
+      <div className="flex items-center gap-2 text-[12px]"><span className="w-32 shrink-0 text-muted-foreground">min score, all classes</span><Slider value={view.minScore * 100} onChange={(v) => updateView({ minScore: v / 100 })} label="Minimum box score" /><span className="w-8 shrink-0 text-right font-mono">{view.minScore.toFixed(2)}</span><span className="w-4 shrink-0" /></div>
+      {classes.length > 0 && (
+        <div className="max-h-60 space-y-1 overflow-y-auto border-t pt-2">
+          <div className="label">min score per class</div>
+          {classes.map((c) => { const own = view.classScore[c]; return (
+            <div key={c} className="flex items-center gap-2 text-[12px]">
+              <span className="flex w-32 shrink-0 items-center gap-1.5" title={c}><span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: labelColor(c) }} /><span className="truncate">{c}</span></span>
+              <Slider value={(own ?? view.minScore) * 100} onChange={(v) => setClass(c, v / 100)} label={`Minimum score for ${c}`} />
+              <span className={cn("w-8 shrink-0 text-right font-mono", own == null && "text-muted-foreground")}>{(own ?? view.minScore).toFixed(2)}</span>
+              <button className="w-4 shrink-0 text-muted-foreground hover:text-foreground disabled:invisible" disabled={own == null} onClick={() => setClass(c, null)} title="Follow the minimum for all classes again" aria-label={`Follow the minimum for all classes again for ${c}`}><X className="h-3 w-3" /></button>
+            </div>
+          ); })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // -------------------------------------------------------------- panel
@@ -119,7 +150,11 @@ export function Samples({ run }: { run: Run }) {
             </div>
           </Popover>
         )}
-        {fc?.kinds.boxes && <label className="flex items-center gap-2 text-[12px] text-muted-foreground">min score <Slider value={view.minScore * 100} onChange={(v) => updateView({ minScore: v / 100 })} className="w-24" label="Minimum box score" /><span className="font-mono">{view.minScore.toFixed(2)}</span></label>}
+        {fc?.kinds.boxes && (
+          <Popover align="end" className="w-[26rem]" trigger={<Button size="sm">Boxes · min score {view.minScore.toFixed(2)}{Object.keys(view.classScore).some((c) => fc.box_classes.includes(c)) ? " +" : ""}</Button>}>
+            <BoxControls view={view} updateView={updateView} classes={fc.box_classes} />
+          </Popover>
+        )}
         </div>
       </Card>
       {fc && (
@@ -219,7 +254,7 @@ function SampleDialog({ run, set, step, rows, index, view, updateView, onClose, 
                 <div className="space-y-2 rounded-md border p-3">
                   <div className="flex flex-wrap gap-x-4 gap-y-1">{keys.map((k) => <Checkbox key={k} checked={visible(k, view, kinds)} onChange={(v) => updateView({ show: { ...view.show, [k]: v } })} label={<span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm" style={{ background: swatch(layerColor(k, kinds)) }} />{layerName(k)}</span>} />)}</div>
                   {keys.length > 0 && <><label className="flex items-center gap-3 text-[12px]"><span className="w-16 text-muted-foreground">opacity</span><Slider value={view.op * 100} onChange={(v) => updateView({ op: v / 100 })} label="Opacity" /></label><label className="flex items-center gap-3 text-[12px]"><span className="w-16 text-muted-foreground">threshold</span><Slider value={view.th * 100} onChange={(v) => updateView({ th: v / 100 })} max={95} label="Threshold" /></label></>}
-                  {(truth.boxes || pred.boxes) && <label className="flex items-center gap-3 text-[12px]"><span className="w-16 text-muted-foreground">min score</span><Slider value={view.minScore * 100} onChange={(v) => updateView({ minScore: v / 100 })} label="Minimum box score" /></label>}
+                  {(truth.boxes || pred.boxes) && <BoxControls view={view} updateView={updateView} classes={[...new Set((pred.boxes ?? []).map((b) => b[4]).filter((l): l is string => typeof l === "string"))].sort()} />}
                   <Checkbox checked={sbs} onChange={setSbs} label="ground truth and prediction side by side" />
                 </div>
               )}

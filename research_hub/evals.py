@@ -90,14 +90,17 @@ def _boxes(value, what):
 
 
 def normalise_row(r: dict) -> dict:
-    """Validate one {sample, facts, true, pred, …} row. Layers come back as {name: (blob sha, kind)}."""
+    """Validate one {sample, facts, true, pred, …} row. Layers come back as {name: (blob sha, kind)}.
+
+    A null removes what was logged before: a fact, or a mask or heatmap (its blob sha comes back as None)."""
     if not isinstance(r, dict):
         raise HubError("each row must be an object")
     sample = str(r.get("sample") or "").strip()[:300]
     if not sample:
         raise HubError("every row needs `sample`: a stable id such as the dataset image id")
-    facts = {str(k): str(v) for k, v in (r.get("facts") or {}).items() if v not in (None, "")}
-    for k in facts:
+    sent = {str(k): v for k, v in (r.get("facts") or {}).items()}
+    facts = {k: str(v) for k, v in sent.items() if v not in (None, "")}
+    for k in sent:
         if not FACT_KEY.fullmatch(k):
             raise HubError(f"{sample}: fact key {k!r} must be lowercase letters, digits or _")
     truth = dict(r.get("true") or {})
@@ -142,7 +145,7 @@ def normalise_row(r: dict) -> dict:
     outcome = r.get("outcome")
     if outcome:
         choice(outcome, OUTCOMES, "outcome")
-    return {"sample": sample, "facts": facts, "truth": truth, "pred": pred, "layers": layers, "metrics": metrics,
+    return {"sample": sample, "facts": facts, "drop_facts": [k for k, v in sent.items() if v is None], "truth": truth, "pred": pred, "layers": layers, "metrics": metrics,
             "meta": meta, "error": error, "outcome": outcome}
 
 
@@ -192,7 +195,7 @@ class Evals:
             for name, (sha, _) in row["layers"].items():
                 if not LAYER.fullmatch(name):
                     raise HubError(f"{row['sample']}: layer name {name!r} must be lowercase letters, digits, _ or -")
-                if not self.db.has_blob(str(sha)):
+                if sha is not None and not self.db.has_blob(str(sha)):
                     raise HubError(f"{row['sample']}: layer {name} refers to blob {str(sha)[:12]}… which was not uploaded")
         counts: dict[str, int] = {}
         with self.connect(write=True) as conn:
@@ -225,6 +228,10 @@ class Evals:
                      pred.get("class") or "", truth.get("value"), pred.get("value"), pred.get("score"), error, outcome, json.dumps(metrics)))
                 for name, (sha, kind) in row["layers"].items():
                     layer_step = STATIC_STEP if name in ("image", "audio") or name.endswith("_gt") else step
+                    if sha is None:
+                        conn.execute("DELETE FROM eval_layers WHERE run=? AND set_id=? AND step=? AND item=? AND layer=?",
+                                     (run_slug, set_id, layer_step, item, name))
+                        continue
                     conn.execute("INSERT OR REPLACE INTO eval_layers VALUES(?,?,?,?,?,?,?)",
                                  (run_slug, set_id, layer_step, item, name, sha, kind))
             conn.execute("UPDATE runs SET updated=? WHERE slug=?", (now(), run_slug))
@@ -246,8 +253,12 @@ class Evals:
             meta = json.loads(existing["meta"])
             prev = meta.get("truth", {})
             meta["truth"] = {**prev, **truth_keep}
+            if row["truth"].get("boxes") == []:  # an empty list says the sample has no boxes: forget the stored ones
+                meta["truth"].pop("boxes", None)
             meta.update(row["meta"])
             conn.execute("UPDATE eval_items SET meta=? WHERE id=?", (json.dumps(meta), item))
+        for k in row["drop_facts"]:
+            conn.execute("DELETE FROM eval_facts WHERE item=? AND key=?", (item, k))
         for k, v in row["facts"].items():
             conn.execute("INSERT OR IGNORE INTO eval_facts VALUES(?,?,?)", (item, k, v[:200]))
         return item, prev
@@ -392,6 +403,10 @@ class Evals:
                                              ("layers", "EXISTS(SELECT 1 FROM eval_layers l WHERE l.run=r.run AND "
                                                         "l.set_id=r.set_id AND l.item=r.item AND l.step>=0)"))},
                    "layers": self._layer_kinds(conn, run_slug, set_id), "facts": {}}
+            out["box_classes"] = [r[0] for r in conn.execute(  # labels of predicted boxes: one score filter each
+                "SELECT DISTINCT json_extract(b.value, '$[4]') FROM eval_results r, json_each(r.pred, '$.boxes') b "
+                "WHERE r.run=? AND r.set_id=? AND r.step=? AND json_extract(b.value, '$[4]') IS NOT NULL ORDER BY 1 "
+                "LIMIT 200", args)] if out["kinds"]["boxes"] else []
             for key, in conn.execute("SELECT DISTINCT f.key FROM eval_facts f JOIN eval_items i ON i.id=f.item "
                                      "WHERE i.set_id=? ORDER BY f.key", (set_id,)):
                 out["facts"][key] = [list(r) for r in conn.execute(

@@ -193,6 +193,11 @@ run.log_eval([row, ...], step=1000, epoch=2, eval_set="pets@2.0:val", negatives=
   1-bit PNG. Uploads are content-addressed: an image sent again costs nothing.
 - Logging the same sample at a later step adds a checkpoint to its timeline. Logging it again at the same step
   overwrites only the fields you send.
+- To take something back, log the row again with a null (`None`) for that mask, heatmap or fact, and `[]` for
+  `boxes`. Nothing is removed just because a later log leaves it out.
+- Give every predicted box its confidence and log boxes well below your operating threshold. The viewer has a
+  minimum score for all boxes and one per class, so a reader can move the cut-off. With low-confidence boxes in
+  the row, send `outcome` yourself; the derived one counts every box.
 - Do not draw masks, boxes or captions into the image yourself. Send them as data and the viewer overlays them.
 
 From a file: `hub run eval <run> results.jsonl --set pets@2.0:val --step 1000` (one JSON row per line; paths

@@ -504,7 +504,7 @@ def _collect_layers(row: dict, base_dir, blobs: dict) -> dict:
     for side, group, kind in (("true", "masks", "mask"), ("pred", "masks", "map"), ("pred", "heatmaps", "map")):
         part = row.get(side) or {}
         if part.get(group):
-            row[side] = {**part, group: {n: ref(src, kind) for n, src in part[group].items() if src is not None}}
+            row[side] = {**part, group: {n: None if src is None else ref(src, kind) for n, src in part[group].items()}}
     for key, kind in (("image", "image"), ("audio", "raw")):
         if row.get(key) is not None:
             row[key] = ref(row[key], kind)
@@ -525,6 +525,7 @@ def log_eval(hub: Hub, slug: str, eval_set: str, step: int, rows: list[dict], ep
     Boxes are in pixels of the image you pass, whatever size it is stored at.
     The hub derives the outcome (correct / missed / false alarm / wrong class / mismatch) from what is present.
     Uploads are content-addressed: an image or mask sent twice costs nothing the second time.
+    To remove something logged earlier, send None for that mask, heatmap or fact, and [] for the boxes.
     """
     totals: dict[str, int] = {}
     logged = 0
