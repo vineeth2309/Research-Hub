@@ -55,7 +55,7 @@ async function paint(ctx: CanvasRenderingContext2D, x0: number, W: number, H: nu
       const gt = k.endsWith("_gt"), color = layerColor(k, kinds);
       tx.clearRect(0, 0, W, H); tx.imageSmoothingEnabled = !gt; tx.drawImage(im, 0, 0, W, H);
       const p = tx.getImageData(0, 0, W, H).data;
-      for (let j = 0; j < d.length; j += 4) { const val = p[j] / 255; if (val <= (gt ? 0.5 : view.th)) continue; const col = color ?? inferno(val); const a = gt ? view.op : view.op * Math.min(1, color ? val : val * 1.4);
+      for (let j = 0; j < d.length; j += 4) { const val = p[j] / 255; if (val <= (gt ? 0.5 : view.th)) continue; const col = color ?? inferno(val); const a = color ? view.op : view.op * Math.min(1, val * 1.4);  // a mask above the threshold is drawn flat; only a heatmap fades with its value
         d[j] = d[j] * (1 - a) + col[0] * a; d[j + 1] = d[j + 1] * (1 - a) + col[1] * a; d[j + 2] = d[j + 2] * (1 - a) + col[2] * a; }
     }
     ctx.putImageData(frame, x0, 0);
