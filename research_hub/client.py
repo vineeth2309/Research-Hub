@@ -424,19 +424,20 @@ def _pil():
         return None
 
 
-def encode_layer(src, kind: str) -> bytes:
-    """Compact encoding for an eval image or layer.
+def encode_layer(src, kind: str) -> tuple[bytes, list[int] | None]:
+    """Compact encoding for an eval image or layer, with the [width, height] it had before it was shrunk.
 
     kind 'image': the input image as WebP, max 512 px. 'map': a 0..1 prediction map as 8-bit PNG, max 192 px.
     'mask': a binary ground-truth mask as 1-bit PNG, max 512 px. 'raw': bytes sent unchanged (audio, files).
     ``src`` is a path, bytes, or a numpy array (HxW for map/mask, HxWx3 for image; floats in 0..1 or uint8).
+    The size is None for bytes sent unchanged.
     """
     Image = _pil()
     if kind == "raw" or Image is None:
         if isinstance(src, (bytes, bytearray)):
-            return bytes(src)
+            return bytes(src), None
         if isinstance(src, (str, Path)):
-            return Path(src).read_bytes()
+            return Path(src).read_bytes(), None
         raise RuntimeError("encoding arrays needs Pillow (pip install pillow)")
     if isinstance(src, (str, Path)):
         img = Image.open(src)
@@ -448,6 +449,7 @@ def encode_layer(src, kind: str) -> bytes:
         if arr.dtype != np.uint8:
             arr = (np.clip(arr.astype("float32"), 0, 1) * 255).round().astype(np.uint8)
         img = Image.fromarray(arr.squeeze())
+    size = list(img.size)
     out = io.BytesIO()
     if kind == "image":
         img = img.convert("RGB")
@@ -461,7 +463,7 @@ def encode_layer(src, kind: str) -> bytes:
         img = img.convert("L")
         img.thumbnail((192, 192), Image.BILINEAR)
         img.save(out, "PNG", optimize=True)
-    return out.getvalue()
+    return out.getvalue(), size
 
 
 def upload_blobs(hub: Hub, blobs: dict) -> None:
@@ -483,13 +485,18 @@ def upload_blobs(hub: Hub, blobs: dict) -> None:
 
 
 def _collect_layers(row: dict, base_dir, blobs: dict) -> dict:
-    """Encode a row's image/audio/masks/heatmaps into ``blobs`` and replace them in the row with blob ids."""
+    """Encode a row's image/audio/masks/heatmaps into ``blobs`` and replace them in the row with blob ids.
+
+    The image is stored shrunk, so the row also gets ``size``: the image's own [width, height], which is what
+    box coordinates are measured in."""
     def ref(src, kind):
         if isinstance(src, str) and SHA.fullmatch(src):
             return src
         if isinstance(src, (str, Path)) and base_dir and not Path(src).is_absolute():
             src = Path(base_dir) / src
-        data = encode_layer(src, kind)
+        data, size = encode_layer(src, kind)
+        if kind == "image" and size:
+            row.setdefault("size", size)
         sha = hashlib.sha256(data).hexdigest()
         blobs[sha] = data
         return sha
@@ -510,10 +517,12 @@ def log_eval(hub: Hub, slug: str, eval_set: str, step: int, rows: list[dict], ep
 
     Row: {"sample": <stable id>, "facts": {"camera": "c2", "site": "north"},  # any keys, every one a filter
           "image": path|bytes|array,                                          # stored once per sample
+          "size": [width, height],                    # of the image boxes are measured in; filled in from "image"
           "true": {"class": "cat", "value": 4, "boxes": [[x,y,w,h,label]], "masks": {"object": mask}, "text": "…"},
           "pred": {"class": "dog", "score": 0.9, "value": 3.2, "boxes": [[x,y,w,h,label,score]],
                    "masks": {"object": prob_map}, "heatmaps": {"attention": map}, "text": "…"},
           "error": 1.4, "metrics": {"dice": 0.71}}
+    Boxes are in pixels of the image you pass, whatever size it is stored at.
     The hub derives the outcome (correct / missed / false alarm / wrong class / mismatch) from what is present.
     Uploads are content-addressed: an image or mask sent twice costs nothing the second time.
     """

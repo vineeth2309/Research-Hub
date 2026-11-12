@@ -169,7 +169,7 @@ row = {
     "true": {"class": "cat",                       # classification
              "value": 4.0,                         # regression
              "masks": {"object": gt_mask},         # segmentation: binary HxW array or image path
-             "boxes": [[x, y, w, h, "cat"]],       # detection, in pixels of the image
+             "boxes": [[x, y, w, h, "cat"]],       # detection, in pixels of the image you pass
              "text": "a cat on a sofa"},           # captioning, OCR, VLM answers
     "pred": {"class": "dog", "score": 0.93, "value": 3.2,
              "masks": {"object": prob_map},        # raw 0..1 maps: the viewer applies threshold and opacity
@@ -185,6 +185,10 @@ run.log_eval([row, ...], step=1000, epoch=2, eval_set="pets@2.0:val", negatives=
 - Send only the keys your task has. A classifier sends `class`; a detector sends `boxes`.
 - `negatives` names the classes that mean "nothing here" (default: negative, background, normal, none, ok, good,
   healthy). Predicting one of them for a positive sample is a *miss*; the reverse is a *false alarm*.
+- Boxes are `[x, y, width, height]` from the top-left corner, in pixels of the image you pass (or all four as
+  fractions of it, 0 to 1). The image is stored smaller, so the client sends its real size along as `size` and the
+  hub keeps the boxes as fractions of it; do not rescale them yourself. Send `true.boxes` and `pred.boxes` in the
+  same row. If you post rows over the API with an image you uploaded yourself, send `"size": [width, height]`.
 - Images are stored as WebP (longest side 512 px), prediction maps as 8-bit PNG (192 px), ground-truth masks as
   1-bit PNG. Uploads are content-addressed: an image sent again costs nothing.
 - Logging the same sample at a later step adds a checkpoint to its timeline. Logging it again at the same step

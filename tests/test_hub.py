@@ -287,17 +287,23 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
         {"sample": "d1", "facts": {"camera": "c9"}, "true": {"boxes": [[10, 10, 20, 20, "dent"]]},
          "pred": {"boxes": [[12, 11, 20, 20, "dent", 0.8], [50, 50, 5, 5, "dent", 0.3]]}},
         {"sample": "d2", "true": {"boxes": [[10, 10, 20, 20, "dent"]]}, "pred": {"boxes": []}},
+        {"sample": "big", "image": np.zeros((853, 1280, 3), dtype=np.uint8), "true": {"boxes": [[640, 400, 320, 200, "dent"]]},
+         "pred": {"boxes": [[640, 400, 320, 200, "dent", 0.9]]}},
         {"sample": "r1", "true": {"value": 3.0}, "pred": {"value": 2.5}},
         {"sample": "t1", "true": {"text": "a red square"}, "pred": {"text": "A red  square"}},
         {"sample": "t2", "true": {"text": "a red square"}, "pred": {"text": "a blue circle"}},
     ]
     res = run.log_eval(rows, step=1000, eval_set=val, epoch=1)
-    assert res["outcomes"] == {"missed": 2, "false_alarm": 1, "wrong_class": 1, "unscored": 1, "correct": 1, "mismatch": 1}
+    assert res["outcomes"] == {"missed": 2, "false_alarm": 1, "wrong_class": 1, "unscored": 1, "correct": 2, "mismatch": 1}
     page = hub.get("/api/runs/multi/eval/samples", set=val)
     by = {r["sample"]: r for r in page["rows"]}
     assert by["s1"]["outcome"] == "missed" and set(by["s1"]["layers"]) == {"image", "object_gt", "object", "attention"}
     assert by["d1"]["metrics"] == {"tp": 1, "fp": 1, "fn": 0} and by["d1"]["outcome"] == "wrong_class"
     assert by["d2"]["outcome"] == "missed" and by["r1"]["error"] == 0.5 and by["t2"]["outcome"] == "mismatch"
+    # an image is stored shrunk, so boxes logged in its pixels are kept as fractions of its real size and still line up;
+    # boxes logged without an image are kept as sent
+    assert by["big"]["truth"]["boxes"] == [[0.5, 0.468933, 0.25, 0.234467, "dent"]] and by["big"]["metrics"]["tp"] == 1
+    assert by["big"]["pred"]["boxes"][0][4:] == ["dent", 0.9] and by["d1"]["truth"]["boxes"] == [[10, 10, 20, 20, "dent"]]
     # any fact is a filter; several values of one fact are OR-ed, different facts AND-ed
     assert [r["sample"] for r in hub.get("/api/runs/multi/eval/samples", set=val, **{"fact.site": "north"})["rows"]] == ["s1", "s2"]
     assert hub.get("/api/runs/multi/eval/samples", set=val, **{"fact.camera": "c12,c9"})["total"] == 2
@@ -317,6 +323,7 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
     timeline = hub.get("/api/runs/multi/eval/sample", set=val, sample="s1")
     assert [(s["step"], s["outcome"]) for s in timeline["steps"]] == [(1000, "missed"), (2000, "correct")]
     assert timeline["truth"]["class"] == "crack" and set(timeline["static_layers"]) == {"image", "object_gt"}
+    assert timeline["meta"]["size"] == [64, 64]  # kept from the step that sent the image
     with denied("relabelled"):
         run.log_eval([{"sample": "s1", "true": {"class": "dent"}}], step=3000, eval_set=val)
     # another run on the same set shares the facts and compares per sample

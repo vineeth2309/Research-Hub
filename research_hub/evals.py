@@ -126,6 +126,15 @@ def normalise_row(r: dict) -> dict:
     metrics, meta = r.get("metrics") or {}, r.get("meta") or {}
     if not isinstance(metrics, dict) or not isinstance(meta, dict):
         raise HubError(f"{sample}: metrics and meta must be objects")
+    if r.get("size") is not None:  # the image's own size. It is stored shrunk, so pixel boxes become fractions of it
+        size = r["size"]
+        if not isinstance(size, list) or len(size) != 2 or not all(type(v) in (int, float) and 1 <= v <= 1e6 for v in size):
+            raise HubError(f"{sample}: size is the image's [width, height] in pixels")
+        meta = {**meta, "size": [round(v) for v in size]}
+        for side in (truth, pred):
+            if "boxes" in side:
+                side["boxes"] = [b if all(v <= 1 for v in b[:4]) else
+                                 [round(v / size[i % 2], 6) for i, v in enumerate(b[:4])] + b[4:] for b in side["boxes"]]
     error = number(r.get("error"), "error")
     if error is None:
         if truth.get("value") is not None and pred.get("value") is not None:
