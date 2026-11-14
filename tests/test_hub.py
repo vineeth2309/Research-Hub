@@ -325,6 +325,11 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
 
     # a later checkpoint only overwrites what it sends; the sample timeline carries both steps
     run.log_eval([{"sample": "s1", "pred": {"class": "crack"}}], step=2000, eval_set=val, epoch=2)
+    # a ground-truth mask logged with the later checkpoint is a layer of the earlier one too; a number that is not
+    # finite is stored as sent but kept out of what the pages aggregate
+    run.log_eval([{"sample": "s2", "true": {"masks": {"region": mask}}, "pred": {"depth": float("nan")}}], step=2000, eval_set=val)
+    assert "region_gt" in hub.get("/api/runs/multi/eval/facets", set=val, step=1000)["layers"]
+    assert "depth" not in hub.get("/api/eval-sets/samples", set=val, runs="multi")["values"]
     timeline = hub.get("/api/runs/multi/eval/sample", set=val, sample="s1")
     assert [(s["step"], s["outcome"]) for s in timeline["steps"]] == [(1000, "missed"), (2000, "correct")]
     assert timeline["truth"]["class"] == "crack" and set(timeline["static_layers"]) == {"image", "object_gt"}

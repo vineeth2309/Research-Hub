@@ -235,8 +235,8 @@ class Datasets:
             ids.append(item)
             outcomes.append(_index(outcome_names, oc, outcome))
             classes.append(_index(class_names, cl, class_pred) if class_pred else -1)
-            scores.append(score)
-            errors.append(error)
+            scores.append(score if score is None or math.isfinite(score) else None)
+            errors.append(error if error is None or math.isfinite(error) else None)
             boxes = boxes or '"boxes"' in truth or '"boxes"' in pred
             text = text or '"text"' in pred
             parsed = json.loads(pred)
@@ -244,7 +244,7 @@ class Datasets:
                 if len(b) > 4 and isinstance(b[4], str):
                     box_classes.add(b[4])
             for k, v in parsed.items():
-                if isinstance(v, (int, float)) and not isinstance(v, bool) and VALUE_KEY.fullmatch(k):
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and VALUE_KEY.fullmatch(k):
                     nums.setdefault(k, {})[pos] = round(v, 6)
         return {"i": ids, "o": outcomes, "oc": outcome_names, "c": classes, "cl": class_names, "s": scores, "e": errors,
                 "n": {k: [col.get(p) for p in range(len(ids))] for k, col in nums.items()},
@@ -299,18 +299,16 @@ class Datasets:
                 raise Indexing("the results logged before this version are being indexed; try again in a few minutes")
             out = {r["id"]: {"set": r["name"], "samples": 0, "runs": []}
                    for r in conn.execute("SELECT id, name FROM eval_sets WHERE project=?", (project,))}
-            last: dict[tuple, tuple] = {}
+            last: dict[str, dict[int, tuple]] = {}
             for run, set_id, step, rows_, logged in conn.execute(
                     "SELECT c.run, c.set_id, c.step, c.rows, c.logged FROM eval_columns c JOIN eval_sets s ON s.id=c.set_id "
-                    "WHERE s.project=?", (project,)):
+                    "WHERE s.project=? ORDER BY c.run, c.set_id, c.step", (project,)):  # steps ascending: the last wins
                 out[set_id]["samples"] = max(out[set_id]["samples"], rows_)
-                if (run, set_id) not in last or step > last[run, set_id][0]:
-                    last[run, set_id] = (step, logged)
+                last.setdefault(run, {})[set_id] = (step, logged)
             for run in rows(conn.execute("SELECT slug, title, owner, category, status, verdict FROM runs WHERE project=? "
                                          "ORDER BY slug", (project,))):
-                for (slug, set_id), (step, logged) in last.items():
-                    if slug == run["slug"]:
-                        out[set_id]["runs"].append({**run, "step": step, "logged": logged})
+                for set_id, (step, logged) in last.get(run["slug"], {}).items():
+                    out[set_id]["runs"].append({**run, "step": step, "logged": logged})
         return sorted((s for s in out.values() if s["runs"]), key=lambda s: (-len(s["runs"]), s["set"]))
 
     # ---------------------------------------------------------------- the chosen runs together
@@ -697,9 +695,9 @@ class Datasets:
                 keep[str(set_id)] = {f"{self._stem('_', 0, 'set')}v{set_versions.get(set_id, 0)}.z"}
             for run, set_id, step, version in conn.execute("SELECT run, set_id, step, version FROM eval_columns"):
                 keep.get(str(set_id), set()).add(f"{self._stem(run, step, 'col')}v{version}.z")
-        for folder in self.db.summaries.iterdir():
+        for folder in (f for f in self.db.summaries.iterdir() if f.is_dir()):
             for f in folder.iterdir():
                 if f.name not in keep.get(folder.name, ()) and not (f.name.startswith(".") and time.time() - f.stat().st_mtime < 3600):
                     f.unlink(missing_ok=True)
-            if folder.name not in keep:
+            if folder.name not in keep and not any(folder.iterdir()):
                 folder.rmdir()
