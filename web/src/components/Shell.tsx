@@ -1,6 +1,6 @@
 // The app frame: project switcher, navigation, search and the account menu.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronsUpDown, FlaskConical, Home, Inbox, LifeBuoy, Lock, MessageSquare, Plus, Search, Settings, SquareStack, Users, Workflow } from "lucide-react";
+import { BookOpen, ChevronsUpDown, FlaskConical, Images, Home, Inbox, LifeBuoy, Lock, MessageSquare, Plus, Search, Settings, SquareStack, Users, Workflow } from "lucide-react";
 import * as React from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Logo } from "@/pages/Auth";
@@ -15,6 +15,7 @@ import { Dialog, Menu, Toaster, toast } from "./ui/overlays";
 const NAV = [
   { to: "home", label: "Home", icon: Home },
   { to: "runs", label: "Runs", icon: SquareStack },
+  { to: "datasets", label: "Datasets", icon: Images },
   { to: "research", label: "Research", icon: FlaskConical },
   { to: "designs", label: "Designs", icon: Workflow },
   { to: "messages", label: "Messages", icon: MessageSquare },

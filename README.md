@@ -38,6 +38,7 @@ can use it without a single agent.
 | **Model architecture** | An interactive diagram of a PyTorch model from one line: layers, shapes, skip connections, where each loss comes from, forward and backward replay |
 | **Designs** | Draw the architecture you want as boxes, groups and arrows. Every save is a revision; agents read the board as data, comment on a box, and propose changes that you accept or reject |
 | **Every sample** | Browse each evaluation image, mask, heatmap, box, text or audio clip; filter by any fact you attach; follow one sample across checkpoints |
+| **Every run on one sample** | The Datasets page shows an eval set across runs: which samples most runs get wrong, which split them, how far any two runs agree, with a CSV export |
 | **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing, and an MCP server for agents without a shell |
 | **Accounts and access** | Private projects, four roles, invite links, API keys, per-run tokens for training jobs, an audit log |
 | **System metrics** | Optional CPU, memory and GPU utilisation, memory, temperature and power |
@@ -249,9 +250,24 @@ cd web && npm ci && npm run build            # the dashboard (React, TypeScript,
 ```
 
 `research_hub/` is the app: `db.py` (schema, files), `core.py` (projects, handbook, inbox), `accounts.py`
-(sign-in, keys, roles), `runs.py`, `charts.py`, `evals.py`, `social.py`, `server.py` (HTTP API and access rules),
+(sign-in, keys, roles), `runs.py`, `charts.py`, `evals.py`, `datasets.py`, `social.py`, `server.py` (HTTP API and access rules),
 `graphs.py`, `client.py`, `plots.py` and `modelgraph.py` (the Python API), `system.py`, `mcp.py`, `cli.py`,
 `integrations/`. The built dashboard is
 committed, so the hub runs without Node.
+
+## Changelog
+
+- **2026-11-14** Datasets page: one eval set across runs. A tile per sample with every run's call, presets for the
+  samples most runs get wrong or disagree on, filters on any fact, seeds grouped by arm, saved run selections,
+  run × run agreement, CSV export, and `GET /api/eval-sets…` for the same data. Works for samples without truth.
+- **2026-11-12** A prediction mask above the threshold is drawn at the chosen opacity.
+- **2026-11-12** Per-class minimum score for predicted boxes, switches for true and predicted boxes, and
+  corrections by logging: a null removes a mask, heatmap or fact, an empty list removes the boxes.
+- **2026-11-12** Boxes line up on images larger than the stored copy: the hub keeps them as fractions of the
+  image's real size.
+- **2026-11-11** Designs: architecture boards drawn by people and proposed by agents, with revisions.
+- **2026-11-10** Requests no longer wait on the disk. A Compose setup that works unchanged on any machine.
+- **2026-11-10** Model architecture view and an MCP server for agents.
+- **2026-11-10** First release: runs, metrics, plots, per-sample results, research posts, chat, reviews, accounts.
 
 MIT licensed.

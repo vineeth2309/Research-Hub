@@ -15,20 +15,20 @@ const PAGE = 24;
 const list = (v?: string) => (v ? v.split(",") : []);
 const OUTCOMES = ["missed", "false_alarm", "wrong_class", "mismatch", "correct", "unscored"];
 const MASK_COLORS = [[255, 64, 24], [26, 204, 128], [60, 140, 255], [255, 200, 0], [200, 80, 255], [0, 200, 220], [255, 120, 180], [150, 220, 40]];
-type Kinds = Record<string, "mask" | "heatmap">;
+export type Kinds = Record<string, "mask" | "heatmap">;
 /** minScore hides predicted boxes below it; classScore overrides it for one class. */
-type View = { show: Record<string, boolean>; op: number; th: number; minScore: number; classScore: Record<string, number> };
-const defaultView: View = { show: {}, op: 0.55, th: 0.2, minScore: 0.3, classScore: {} };
+export type View = { show: Record<string, boolean>; op: number; th: number; minScore: number; classScore: Record<string, number> };
+export const defaultView: View = { show: {}, op: 0.55, th: 0.2, minScore: 0.3, classScore: {} };
 // boxes are switched on and off like layers; a layer name cannot contain a colon, so these never clash with one
 const TRUE_BOXES = ":true-boxes", PRED_BOXES = ":pred-boxes";
 /** Overlay layers of a sample in a stable order: every layer the run logged, whatever it is called. */
-const layerKeys = (layers: Record<string, string>) => Object.keys(layers).filter((k) => k !== "image" && k !== "audio").sort();
+export const layerKeys = (layers: Record<string, string>) => Object.keys(layers).filter((k) => k !== "image" && k !== "audio").sort();
 /** A mask keeps one colour per name across the whole eval set; a heatmap uses the inferno ramp. */
-const layerColor = (k: string, kinds: Kinds) => (kinds[k] === "heatmap" ? null : MASK_COLORS[Math.max(0, Object.keys(kinds).filter((x) => kinds[x] === "mask").sort().indexOf(k)) % MASK_COLORS.length]);
-const layerName = (k: string) => (k.endsWith("_gt") ? `${k.slice(0, -3)} (truth)` : k).replace(/_/g, " ");
+export const layerColor = (k: string, kinds: Kinds) => (kinds[k] === "heatmap" ? null : MASK_COLORS[Math.max(0, Object.keys(kinds).filter((x) => kinds[x] === "mask").sort().indexOf(k)) % MASK_COLORS.length]);
+export const layerName = (k: string) => (k.endsWith("_gt") ? `${k.slice(0, -3)} (truth)` : k).replace(/_/g, " ");
 /** Shown unless switched off. Heatmaps start hidden when the run also logged masks, so the image stays readable. */
-const visible = (k: string, view: View, kinds: Kinds) => view.show[k] ?? (kinds[k] !== "heatmap" || !Object.values(kinds).includes("mask"));
-const swatch = (c: number[] | null) => (c ? `rgb(${c.join(",")})` : "linear-gradient(90deg,#57106e,#bc3754,#f98e09,#fcffa4)");
+export const visible = (k: string, view: View, kinds: Kinds) => view.show[k] ?? (kinds[k] !== "heatmap" || !Object.values(kinds).includes("mask"));
+export const swatch = (c: number[] | null) => (c ? `rgb(${c.join(",")})` : "linear-gradient(90deg,#57106e,#bc3754,#f98e09,#fcffa4)");
 const labelColor = (l: string) => { let h = 0; for (const c of l) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; };
 const stepLabel = (s: { step: number; epoch: number | null }) => `${s.epoch != null && s.epoch >= 0 ? `epoch ${s.epoch} · ` : ""}step ${s.step.toLocaleString()}`;
 
@@ -40,7 +40,7 @@ function blob(sha: string) {
 }
 const inferno = (t: number) => { const s = [[0, 0, 4], [87, 16, 110], [188, 55, 84], [249, 142, 9], [252, 255, 164]]; const x = Math.min(0.999, Math.max(0, t)) * 4, i = Math.floor(x), f = x - i; return s[i].map((v, j) => v + (s[i + 1][j] - v) * f); };
 
-async function paint(ctx: CanvasRenderingContext2D, x0: number, W: number, H: number, layers: Record<string, string>, keys: string[], kinds: Kinds, truth: Side, pred: Side, view: View, sides = { gt: true, pred: true }) {
+export async function paint(ctx: CanvasRenderingContext2D, x0: number, W: number, H: number, layers: Record<string, string>, keys: string[], kinds: Kinds, truth: Side, pred: Side, view: View, sides = { gt: true, pred: true }) {
   const css = (n: string) => `hsl(${getComputedStyle(document.documentElement).getPropertyValue(n).trim()})`;
   ctx.fillStyle = css("--muted"); ctx.fillRect(x0, 0, W, H);
   let base: HTMLImageElement | null = null;

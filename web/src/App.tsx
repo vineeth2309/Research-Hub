@@ -15,6 +15,7 @@ export const projectRoutes: RouteObject[] = [
   { path: "runs", element: lazy(() => import("./pages/Runs")) },
   { path: "runs/:slug", element: lazy(() => import("./pages/RunPage")) },
   { path: "runs/:slug/:tab", element: lazy(() => import("./pages/RunPage")) },
+  { path: "datasets", element: lazy(() => import("./pages/Datasets")) },
   { path: "compare/:slugs", element: lazy(() => import("./pages/Compare")) },
   { path: "research", element: lazy(() => import("./pages/Research")) },
   { path: "research/:topic", element: lazy(() => import("./pages/Research")) },

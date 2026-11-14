@@ -7,6 +7,7 @@ import json
 from .accounts import Accounts
 from .charts import Charts
 from .core import Core
+from .datasets import Datasets
 from .designs import Designs, _words
 from .evals import Evals
 from .graphs import Graphs
@@ -14,7 +15,7 @@ from .runs import Runs
 from .social import Social
 
 
-class Store(Core, Accounts, Runs, Charts, Graphs, Designs, Evals, Social):
+class Store(Core, Accounts, Runs, Charts, Graphs, Designs, Evals, Datasets, Social):
     def reindex(self) -> int:
         """Rebuild the full-text index from the tables."""
         n = 0

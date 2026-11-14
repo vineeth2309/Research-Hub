@@ -252,6 +252,13 @@ class Api:
               "run", "viewer"),
             R("GET", "/api/runs/([^/]+)/eval/sample", lambda c: s.eval_sample(
                 c.m[0], c.q.get("set"), c.q.get("sample", "")), "run", "viewer"),
+            R("GET", "/api/eval-sets", lambda c: s.eval_sets(c.project), "project", "viewer"),
+            R("GET", "/api/eval-sets/samples", lambda c: s.dataset_samples(
+                c.project, c.q.get("set"), _csv(c.q.get("runs")), c.q, c.q.get("sort", "wrong"), c.q.get("desc", "1") != "0",
+                int(c.q.get("limit", 48)), int(c.q.get("offset", 0)), c.q.get("value"), c.q.get("compact") == "1"),
+              "project", "viewer"),
+            R("GET", "/api/eval-sets/summary", lambda c: s.dataset_summary(
+                c.project, c.q.get("set"), _csv(c.q.get("runs")), c.q, c.q.get("by"), c.q.get("value")), "project", "viewer"),
             R("GET", "/api/compare", lambda c: s.compare(_csv(c.q.get("runs"))), "runs", "viewer"),
             R("GET", "/api/compare/charts", lambda c: s.compare_charts(_csv(c.q.get("runs"))), "runs", "viewer"),
             R("GET", "/api/posts/([^/]+)", lambda c: s.get_post(c.m[0]), "post", "viewer"),

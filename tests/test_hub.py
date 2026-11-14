@@ -353,6 +353,51 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
     assert hub.get("/api/runs/multi/eval/samples", set="field@2.1")["rows"][0]["outcome"] == "missed"
 
 
+def test_one_eval_set_across_runs(site):
+    hub = site.agent("agent-d")
+    val, prod = "parts@1.0:val", "parts@1.0:field"
+    truth = {"a": "crack", "b": "crack", "c": "normal", "d": "normal"}
+    calls = {"arm-s0": {"a": "normal", "b": "crack", "c": "normal", "d": "crack"},
+             "arm-s1": {"a": "normal", "b": "normal", "c": "normal", "d": "crack"},
+             "base": {"a": "normal", "b": "crack", "c": "normal", "d": "normal"}}
+    runs = {}
+    for n, (slug, preds) in enumerate(calls.items()):
+        runs[slug] = run = hubclient.init(slug, project="research", title=slug, **{**STRICT, "parent": "none"}, hub=hub)
+        run.log_eval([{"sample": k, "facts": {"site": "north" if k in "ab" else "south"}, "true": {"class": truth[k]},
+                       "pred": {"class": v, "score": 0.9, "depth": n + 1.0}} for k, v in preds.items()], step=5, eval_set=val)
+        run.log_eval([{"sample": "p1", "pred": {"class": "crack" if n else "normal"}}], step=5, eval_set=prod)
+    listed = {s["set"]: s for s in hub.get("/api/eval-sets")}
+    assert listed[val]["samples"] == 4 and [(r["slug"], r["step"]) for r in listed[val]["runs"]] == [(s, 5) for s in calls]
+    every = ",".join(calls)
+    page = hub.get("/api/eval-sets/samples", set=val, runs=every)
+    by = {r["sample"]: r for r in page["rows"]}
+    assert [r["sample"] for r in page["rows"]] == ["a", "d", "b", "c"] and page["value"] == "depth"  # most runs wrong first
+    assert (by["a"]["wrong"], by["a"]["missed"], by["d"]["false_alarm"], by["c"]["wrong"]) == (3, 3, 2, 0)
+    assert by["b"]["calls"] == [["correct", "crack", 1.0, 0.9], ["missed", "normal", 2.0, 0.9], ["correct", "crack", 3.0, 0.9]]
+    assert by["b"]["disagree"] == 0.3333 and by["b"]["value_mean"] == 2.0 and by["b"]["classes"] == [["crack", 2], ["normal", 1]]
+
+    def samples(**q):
+        return [r["sample"] for r in hub.get("/api/eval-sets/samples", set=val, runs=every, **q)["rows"]]
+    assert samples(preset="all_wrong") == ["a"] and samples(preset="split") == ["d", "b"] and samples(preset="all_right") == ["c"]
+    assert samples(preset="one_wrong", run="arm-s1") == ["b"] and samples(preset="one_right", run="base") == ["d"]
+    assert samples(**{"fact.site": "south"}) == ["d", "c"] and samples(class_true="crack", q="b") == ["b"]
+    assert samples(pred_class="crack", pred_min=2, sort="pred") == ["b", "d"]
+    summary = hub.get("/api/eval-sets/summary", set=val, runs=every, by="site")
+    assert summary["wrong_hist"] == [1, 1, 1, 1] and summary["presets"]["most_wrong"] == 2
+    assert summary["groups"] == [["north", 2, 1], ["south", 2, 1]] and summary["facts"]["site"] == summary["groups"]
+    assert summary["agreement"][0] == [1.0, 0.75, 0.75] and summary["agreement"][1][2] == 0.5
+    # without truth no run can be wrong: the runs are compared by the class they predict
+    field = hub.get("/api/eval-sets/summary", set=prod, runs=every)
+    assert field["scored"] == 0 and field["agreement"][0] == [1.0, 0.0, 0.0] and field["agreement"][1][2] == 1.0
+    assert hub.get("/api/eval-sets/samples", set=prod, runs=every, pred_class="normal", pred_max=1)["rows"][0]["disagree"] == 0.3333
+    # a correction logged to a finished run shows at once
+    runs["base"].finish("done", verdict="inconclusive")
+    hubclient.log_eval(hub, "base", val, 5, [{"sample": "a", "pred": {"class": "crack"}}])
+    assert samples(preset="all_wrong") == [] and samples(preset="one_right", run="base") == ["a", "d"]
+    with denied("has no results in detectors"):
+        hub.get("/api/eval-sets/samples", set=val, runs="arm-s0,elsewhere", project="detectors")
+
+
 def test_plots_tables_and_system_metrics(site, monkeypatch):
     np = pytest.importorskip("numpy")
     from research_hub import plots

@@ -237,6 +237,7 @@ class Evals:
             conn.execute("UPDATE runs SET updated=? WHERE slug=?", (now(), run_slug))
             self._event(conn, actor["name"], "eval.log", f"run:{run_slug}",
                         f"{len(parsed)} samples of {eval_set} at step {step}", run["project"])
+        self._eval_changed(set_id)
         return {"logged": len(parsed), "set": eval_set, "step": step, "outcomes": counts}
 
     def _upsert_item(self, conn, set_id, row) -> tuple[int, dict]:
