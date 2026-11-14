@@ -257,6 +257,8 @@ committed, so the hub runs without Node.
 
 ## Changelog
 
+- **2026-11-14** The Datasets page says when it is loading or could not load, and the list of eval sets is kept
+  in memory so it opens at once.
 - **2026-11-14** Datasets page: one eval set across runs. A tile per sample with every run's call, presets for the
   samples most runs get wrong or disagree on, filters on any fact, seeds grouped by arm, saved run selections,
   run × run agreement, CSV export, and `GET /api/eval-sets…` for the same data. Works for samples without truth.

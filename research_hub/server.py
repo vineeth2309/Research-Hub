@@ -533,6 +533,7 @@ def serve(home, host="127.0.0.1", port=6230, public_url=None):
     httpd = ThreadingHTTPServer((host, port), make_handler(api, trust_proxy=behind_proxy))
     base = (public_url or f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}").rstrip("/")
     print(f"[hub] serving {store.db.home} on {host}:{port}", flush=True)
+    threading.Thread(target=store.eval_index, daemon=True).start()  # read ahead, so the Datasets page opens at once
     if api.setup_code:
         print(f"[hub] first run: create the admin account at\n      {base}/#/setup?code={api.setup_code}", flush=True)
     try:

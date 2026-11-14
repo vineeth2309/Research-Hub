@@ -7,7 +7,7 @@ import { Checkbox, Chip, FacetFilter, Select, Slider, Switch } from "@/component
 import { Pager } from "@/components/ui/data";
 import { PageHeader } from "@/components/ui/form";
 import { Dialog, Popover, toast } from "@/components/ui/overlays";
-import { Badge, Button, Card, Empty, Input, OUTCOME_LABEL, statusTone, verdictTone, type Tone } from "@/components/ui/primitives";
+import { Badge, Button, Card, Empty, Input, OUTCOME_LABEL, Spinner, statusTone, verdictTone, type Tone } from "@/components/ui/primitives";
 import { get, type Call, type DatasetPage, type DatasetRow, type DatasetRun, type DatasetSummary, type EvalSetInfo, type SampleDetail } from "@/lib/api";
 import { useHub } from "@/lib/state";
 import { cn, fmt, hashColor, pref, setPref } from "@/lib/utils";
@@ -159,6 +159,7 @@ export default function Datasets() {
   const rows = useQuery({ queryKey: ["dataset-samples", hub.project, query, sort, page], enabled: ready, placeholderData: keepPreviousData, queryFn: () => get<DatasetPage>("/api/eval-sets/samples", { ...query, sort, limit: PAGE, offset: page * PAGE }) });
   const setFilter = (k: string, v: string) => { setF((o) => { const n = { ...o }; if (v) n[k] = v; else delete n[k]; return n; }); setPage(0); };
   const reset = () => { setF({}); setPage(0); setSort("wrong"); setValue(""); setBy(""); };
+  if (!sets.data) return <div className="space-y-5"><PageHeader title="Datasets" />{sets.error ? <Empty title="The eval sets could not be loaded">{(sets.error as Error).message}. <button className="text-primary hover:underline" onClick={() => sets.refetch()}>Try again</button></Empty> : <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Spinner />Loading the eval sets…</div>}</div>;
   if (sets.data && !sets.data.length) return <div className="space-y-5"><PageHeader title="Datasets" /><Empty title="No eval samples logged yet">Once runs log per-sample results with <code>run.log_eval(rows, step=…, eval_set=…)</code>, each eval set appears here with every run's call on every sample.</Empty></div>;
   const sm = summary.data, pg = rows.data, scored = !!sm?.scored;
   const order = pg?.runs.map((r) => r.slug) ?? slugs;
@@ -215,6 +216,7 @@ export default function Datasets() {
       )}
       {sm && panels && <Summary s={sm} slugs={sm.runs.map((r) => r.slug)} by={sm.by ?? ""} onBy={setBy} />}
       {(summary.error || rows.error) && <Empty title="This view could not be loaded">{((summary.error || rows.error) as Error).message}</Empty>}
+      {ready && !pg && !rows.error && <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Spinner />Reading {slugs.length} runs on {info?.samples.toLocaleString()} samples…</div>}
       {pg && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted-foreground">
           <span>{pg.total.toLocaleString()} matching sample{pg.total === 1 ? "" : "s"} · {slugs.length} run{slugs.length === 1 ? "" : "s"}</span>

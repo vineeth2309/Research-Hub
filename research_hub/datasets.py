@@ -69,11 +69,36 @@ def _chunks(seq, size=500):
 
 class Datasets:
     # ---------------------------------------------------------------- cache
-    def _eval_changed(self, set_id):
-        """Rows of this eval set were written: forget what was loaded from it."""
+    def _eval_changed(self, set_id, run, step):
+        """Rows of this eval set were written: forget what was loaded from it, and note the run's checkpoint."""
         with _lock:
             versions = self.__dict__.setdefault("_dataset_versions", {})
             versions[set_id] = versions.get(set_id, 0) + 1
+            if "_eval_runs" in self.__dict__:
+                sets = self._eval_runs.setdefault(run, {})
+                sets[set_id] = max(step, sets.get(set_id, step))
+
+    def _eval_forget(self, run):
+        with _lock:
+            self.__dict__.get("_eval_runs", {}).pop(run, None)
+
+    def eval_index(self) -> dict:
+        """{run: {eval set id: last step}} for every run, read once and then kept up to date by log_eval."""
+        with _lock:  # held while reading, so a log_eval that lands meanwhile is applied after, not lost
+            if "_eval_runs" not in self.__dict__:
+                index: dict[str, dict[int, int]] = {}
+                with self.connect() as conn:
+                    for (run,) in conn.execute("SELECT slug FROM runs").fetchall():
+                        set_id = -1
+                        while True:  # hop from one set of this run to the next: a few index seeks, not a scan
+                            set_id = conn.execute("SELECT MIN(set_id) FROM eval_results WHERE run=? AND set_id>?",
+                                                  (run, set_id)).fetchone()[0]
+                            if set_id is None:
+                                break
+                            index.setdefault(run, {})[set_id] = conn.execute(
+                                "SELECT MAX(step) FROM eval_results WHERE run=? AND set_id=?", (run, set_id)).fetchone()[0]
+                self._eval_runs = index
+            return {run: dict(sets) for run, sets in self._eval_runs.items()}
 
     def _dataset_memo(self, set_id, key, build):
         with _lock:
@@ -92,23 +117,18 @@ class Datasets:
     # ---------------------------------------------------------------- loading
     def eval_sets(self, project) -> list[dict]:
         """Every eval set of a project with the runs that logged it, each at its last checkpoint."""
+        index = self.eval_index()
         with self.connect() as conn:
             out = {r["id"]: {"set": r["name"], "samples": 0, "runs": []}
                    for r in conn.execute("SELECT id, name FROM eval_sets WHERE project=?", (project,))}
             for run in rows(conn.execute("SELECT slug, title, owner, category, status, verdict FROM runs WHERE project=? "
                                          "ORDER BY slug", (project,))):
-                set_id = -1
-                while True:  # hop from one set of this run to the next: a few index seeks, not a scan of its rows
-                    set_id = conn.execute("SELECT MIN(set_id) FROM eval_results WHERE run=? AND set_id>?",
-                                          (run["slug"], set_id)).fetchone()[0]
-                    if set_id is None:
-                        break
-                    step = conn.execute("SELECT MAX(step) FROM eval_results WHERE run=? AND set_id=?",
-                                        (run["slug"], set_id)).fetchone()[0]
+                for set_id, step in index.get(run["slug"], {}).items():
                     out[set_id]["runs"].append({**run, "step": step})
             found = [(set_id, s) for set_id, s in out.items() if s["runs"]]
             for set_id, s in found:
-                s["samples"] = conn.execute("SELECT COUNT(*) FROM eval_items WHERE set_id=?", (set_id,)).fetchone()[0]
+                s["samples"] = self._dataset_memo(set_id, ("count",), lambda set_id=set_id: conn.execute(
+                    "SELECT COUNT(*) FROM eval_items WHERE set_id=?", (set_id,)).fetchone()[0])
         return sorted((s for _, s in found), key=lambda s: (-len(s["runs"]), s["set"]))
 
     def _dataset_items(self, conn, set_id) -> dict:

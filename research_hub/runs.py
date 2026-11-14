@@ -228,6 +228,7 @@ class Runs:
         conn.execute("DELETE FROM search WHERE ref=?", (ref,))
         conn.execute("UPDATE runs SET parent=NULL WHERE parent=?", (run_slug,))
         conn.execute("DELETE FROM runs WHERE slug=?", (run_slug,))
+        self._eval_forget(run_slug)
 
     def delete_run(self, actor, run_slug, confirm) -> dict:
         """Delete a run for good. Only a person may: the run's owner, or a project maintainer or owner."""
