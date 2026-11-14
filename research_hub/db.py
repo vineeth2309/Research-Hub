@@ -123,11 +123,24 @@ CREATE INDEX IF NOT EXISTS eval_results_class ON eval_results(run, set_id, step,
 CREATE TABLE IF NOT EXISTS eval_layers(run TEXT NOT NULL, set_id INTEGER NOT NULL, step INTEGER NOT NULL,
     item INTEGER NOT NULL, layer TEXT NOT NULL, blob_sha TEXT NOT NULL, kind TEXT NOT NULL,
     PRIMARY KEY(run, set_id, item, step, layer)) WITHOUT ROWID;
+-- lists of runs (the Datasets page, run pickers) are answered from this index alone, not from the wide run rows
+CREATE INDEX IF NOT EXISTS runs_listing ON runs(project, slug, title, owner, category, status, verdict);
+-- one row per run, eval set and checkpoint: what the Datasets page and the run's eval list read without touching
+-- eval_results. version rises with every write; summary files in <home>/summaries are named after it
+CREATE TABLE IF NOT EXISTS eval_columns(run TEXT NOT NULL, set_id INTEGER NOT NULL, step INTEGER NOT NULL,
+    epoch INTEGER, rows INTEGER NOT NULL DEFAULT 0, wrong INTEGER NOT NULL DEFAULT 0, layered INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1, logged TEXT NOT NULL, PRIMARY KEY(run, set_id, step)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS eval_columns_set ON eval_columns(set_id, run, step);
+-- rises when a sample, its truth, its image or one of its facts changes
+CREATE TABLE IF NOT EXISTS eval_set_versions(set_id INTEGER PRIMARY KEY, version INTEGER NOT NULL);
 """
 
 # Schema changes after a release go here as (version, sql), oldest first; a new database starts at the latest.
-MIGRATIONS: list[tuple[int, str]] = []
-SCHEMA_VERSION = 1
+MIGRATIONS: list[tuple[int, str]] = [
+    # 2: eval_columns and eval_set_versions (created by SCHEMA); earlier results are indexed in the background
+    (2, "INSERT OR REPLACE INTO meta VALUES('eval_index', 'pending');"),
+]
+SCHEMA_VERSION = 2
 
 MAX_BLOB = 25 * 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{64}")
@@ -137,7 +150,8 @@ class Database:
     def __init__(self, home: str | Path):
         self.home = Path(home).expanduser().resolve()
         self.blobs = self.home / "blobs"
-        for folder in (self.home, self.blobs):  # a new home is private to the hub's user
+        self.summaries = self.home / "summaries"  # per-run results of an eval set, packed small; rebuilt on demand
+        for folder in (self.home, self.blobs, self.summaries):  # a new home is private to the hub's user
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = self.home / "hub.sqlite3"
         with self.connect() as conn:

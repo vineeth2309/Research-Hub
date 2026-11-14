@@ -222,6 +222,9 @@ last logged checkpoint.
   anything that differs from run to run in `pred`, `metrics` or `outcome`, not in `facts`.
 - A finished run still takes rows logged with your own key, so a corrected outcome can be logged later with
   `hub run eval` or `research_hub.client.log_eval`.
+- Each run shows when its results were last logged, in the run picker and the sample table; a correction on a
+  closed run updates it. Adding a sample, or adding or removing a fact, makes the set's sample list rebuild on the
+  next request (a few seconds on a large set), so keep facts stable and put per-run values in `pred` or `metrics`.
 
 The same data over the API, for building hard-case sets:
 

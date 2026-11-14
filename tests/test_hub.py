@@ -308,6 +308,11 @@ def test_eval_samples_for_every_task_type(site, tmp_path):
     assert [r["sample"] for r in hub.get("/api/runs/multi/eval/samples", set=val, **{"fact.site": "north"})["rows"]] == ["s1", "s2"]
     assert hub.get("/api/runs/multi/eval/samples", set=val, **{"fact.camera": "c12,c9"})["total"] == 2
     assert hub.get("/api/runs/multi/eval/samples", set=val, outcome="missed", **{"fact.camera": "c12"})["total"] == 1
+    one = lambda **q: [r["sample"] for r in hub.get("/api/runs/multi/eval/samples", set=val, **q)["rows"]]  # noqa: E731
+    assert one(value_min=5) == ["s1"] and one(value_max=5) == ["r1"] and one(layered=1) == ["s1"] and one(class_pred="dent") == ["s2"]
+    assert one(sort="score")[0] == "s1" and one(sort="sample")[:2] == ["big", "d1"]
+    paged = hub.get("/api/runs/multi/eval/samples", set=val, sort="sample", limit=3, offset=6)
+    assert paged["total"] == 8 and [r["sample"] for r in paged["rows"]] == ["t1", "t2"]
     facets = hub.get("/api/runs/multi/eval/facets", set=val)
     assert facets["kinds"] == {"boxes": True, "text": True, "value": True, "layers": True}
     assert facets["layers"] == {"attention": "heatmap", "object": "mask", "object_gt": "mask"}
@@ -396,6 +401,48 @@ def test_one_eval_set_across_runs(site):
     assert samples(preset="all_wrong") == [] and samples(preset="one_right", run="base") == ["a", "d"]
     with denied("has no results in detectors"):
         hub.get("/api/eval-sets/samples", set=val, runs="arm-s0,elsewhere", project="detectors")
+    # what the page reads is packed into small files named after the version; a write raises it and the old file goes
+    store = site.store
+    with store.connect() as conn:
+        set_id = conn.execute("SELECT id FROM eval_sets WHERE name=?", (val,)).fetchone()[0]
+        version = lambda run: conn.execute("SELECT version FROM eval_columns WHERE run=? AND set_id=? AND step=5",  # noqa: E731
+                                           (run, set_id)).fetchone()[0]
+        packed = lambda stem="": sorted(f"{p.name}" for p in (store.db.summaries / str(set_id)).glob(f"{stem}*.z"))  # noqa: E731
+        assert packed("_~0~set~") and packed("arm-s0~5~col~") and version("base") == 2 and version("arm-s0") == 1
+        before = packed("base~5~col~")
+        assert before == ["base~5~col~v2.z"]
+    hubclient.log_eval(hub, "base", val, 5, [{"sample": "e", "facts": {"site": "east"}, "true": {"class": "crack"},
+                                              "pred": {"class": "crack", "depth": 4.0}},
+                                             {"sample": "a", "facts": {"site": None}}])
+    after = hub.get("/api/eval-sets/samples", set=val, runs=every, sort="sample", desc=0)
+    assert [r["sample"] for r in after["rows"]] == ["a", "b", "c", "d", "e"] and after["rows"][0]["facts"] == {}
+    assert after["rows"][4]["runs"] == 1 and after["rows"][4]["calls"] == [None, None, ["correct", "crack", 4.0, None]]
+    assert {r["slug"] for r in after["runs"]} == set(calls) and all(r["logged"] for r in after["runs"])
+    assert packed("base~5~col~") == ["base~5~col~v3.z"]  # replaced, not accumulated
+    facets = hub.get("/api/runs/base/eval/facets", set=val)
+    assert facets["facts"]["site"][0] == ["south", 2, 0] and sorted(facets["facts"]["site"][1:]) == [["east", 1, 0], ["north", 1, 0]]
+    assert hub.get("/api/runs/base/eval/facets", set=val) == facets  # the second read comes from the file
+    assert {s["set"]: s["steps"][0]["samples"] for s in hub.get("/api/runs/base")["eval_sets"]} == {val: 5, prod: 1}
+    # a database from before these tables is indexed again at the first start, and answers the same
+    answers = (samples(preset="split"), hub.get("/api/eval-sets/summary", set=val, runs=every)["wrong_hist"])
+    with store.connect(write=True) as conn:
+        for table in ("eval_columns", "eval_set_versions"):
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('eval_index', 'pending')")
+    for f in store.db.summaries.rglob("*.z"):
+        f.unlink()
+    assert not packed("_~0~set~")
+    with denied("being indexed"):
+        hub.get("/api/eval-sets")
+    store.eval_backfill()
+    assert (samples(preset="split"), hub.get("/api/eval-sets/summary", set=val, runs=every)["wrong_hist"]) == answers
+    assert {s["set"]: len(s["runs"]) for s in hub.get("/api/eval-sets")} == {val: 3, prod: 3}
+    assert {s["set"]: s["steps"][0]["samples"] for s in hub.get("/api/runs/base")["eval_sets"]} == {val: 5, prod: 1}
+    # deleting a run takes its rows and, at the next sweep, its files
+    assert hub.get("/api/runs/arm-s1") and site.ada.request("DELETE", "/api/runs/arm-s1", query={"confirm": "arm-s1"})
+    store._sweep_summaries()
+    assert not packed("arm-s1~")
+    assert [r["slug"] for s in hub.get("/api/eval-sets") if s["set"] == val for r in s["runs"]] == ["arm-s0", "base"]
 
 
 def test_plots_tables_and_system_metrics(site, monkeypatch):

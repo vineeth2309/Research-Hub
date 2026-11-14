@@ -523,16 +523,12 @@ def bootstrap(store: Store) -> None:
         print(f"[hub] created the project {project}", flush=True)
 
 
-def _read_ahead(store, limit=16 << 30):
-    """Read the database file once in the background so it sits in the operating system's cache: on a busy disk
-    each cold index lookup takes seconds, and a page that needs thousands of them takes minutes."""
+def _index_eval_results(store):
+    """After an upgrade, pack earlier eval results for the Datasets page; no-op once it is done."""
     try:
-        with open(store.db.path, "rb", buffering=0) as f:
-            while limit > 0 and (chunk := f.read(8 << 20)):
-                limit -= len(chunk)
-    except OSError:
-        pass
-    store.eval_index()
+        store.eval_backfill()
+    except Exception as e:  # a background job must not take the hub down; it resumes at the next start
+        print(f"[hub] indexing eval results failed: {e!r}", flush=True)
 
 
 def serve(home, host="127.0.0.1", port=6230, public_url=None):
@@ -545,7 +541,7 @@ def serve(home, host="127.0.0.1", port=6230, public_url=None):
     httpd = ThreadingHTTPServer((host, port), make_handler(api, trust_proxy=behind_proxy))
     base = (public_url or f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}").rstrip("/")
     print(f"[hub] serving {store.db.home} on {host}:{port}", flush=True)
-    threading.Thread(target=_read_ahead, args=(store,), daemon=True).start()
+    threading.Thread(target=_index_eval_results, args=(store,), daemon=True).start()
     if api.setup_code:
         print(f"[hub] first run: create the admin account at\n      {base}/#/setup?code={api.setup_code}", flush=True)
     try:

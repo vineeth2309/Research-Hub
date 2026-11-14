@@ -134,7 +134,14 @@ rsync -a /srv/research_hub/blobs/ /backup/blobs/
 Blobs are named by their SHA-256 and never change, so the copy is incremental. To restore, put both back and
 start the hub.
 
+`summaries/` next to the database holds packed copies of per-sample results for the Datasets and Samples pages. It
+is rebuilt on demand, so it does not need a backup: restore without it and the first requests rebuild what they read.
+
 ## Upgrading
 
 Install the new release (`pip install -U git+https://github.com/vineeth2309/Research-Hub`) and restart. The database records its schema version; a newer release migrates
 it on start, and an older release refuses to open a newer database rather than damage it. Back up first.
+
+Release 0.1.0 after 2026-11-14 adds two small tables and, on the first start, indexes the per-sample results already
+logged in the background (minutes on a busy disk; the Datasets page answers "being indexed" until the counting step
+is done, and nothing else waits). If the hub is stopped meanwhile, the next start resumes.

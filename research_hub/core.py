@@ -277,6 +277,7 @@ class Core:
             conn.execute("DELETE FROM eval_facts WHERE item IN (SELECT i.id FROM eval_items i JOIN eval_sets s "
                          "ON s.id=i.set_id WHERE s.project=?)", (slug_,))
             conn.execute("DELETE FROM eval_items WHERE set_id IN (SELECT id FROM eval_sets WHERE project=?)", (slug_,))
+            conn.execute("DELETE FROM eval_set_versions WHERE set_id IN (SELECT id FROM eval_sets WHERE project=?)", (slug_,))
             for table in ("posts", "messages", "channels", "topics", "categories", "claims", "handbook",
                           "handbook_proposals", "events", "eval_sets", "memberships", "invites", "search"):
                 conn.execute(f"DELETE FROM {table} WHERE project=?", (slug_,))

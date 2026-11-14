@@ -10,7 +10,7 @@ import { Dialog, Popover, toast } from "@/components/ui/overlays";
 import { Badge, Button, Card, Empty, Input, OUTCOME_LABEL, Spinner, statusTone, verdictTone, type Tone } from "@/components/ui/primitives";
 import { get, type Call, type DatasetPage, type DatasetRow, type DatasetRun, type DatasetSummary, type EvalSetInfo, type SampleDetail } from "@/lib/api";
 import { useHub } from "@/lib/state";
-import { cn, fmt, hashColor, pref, setPref } from "@/lib/utils";
+import { ago, cn, fmt, hashColor, pref, setPref, when } from "@/lib/utils";
 import { defaultView, layerColor, layerKeys, layerName, paint, swatch, visible, type View } from "./Samples";
 
 const PAGE = 48;
@@ -71,7 +71,7 @@ function RunPicker({ runs, picked, onPick, project }: { runs: DatasetRun[]; pick
           {shown.map((r) => (
             <div key={r.slug} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-muted">
               <Checkbox checked={picked.includes(r.slug)} onChange={(v) => onPick(v ? [...picked, r.slug] : picked.filter((s) => s !== r.slug))} label={<span className="font-mono text-[12px]">{r.slug}</span>} className="min-w-0 flex-1" />
-              <span className="shrink-0 text-[11.5px] text-muted-foreground">{r.owner}</span>
+              <span className="shrink-0 text-[11.5px] text-muted-foreground" title={`results logged ${when(r.logged)}`}>{r.owner} · {ago(r.logged)}</span>
               <Badge tone={r.verdict ? verdictTone(r.verdict) : statusTone(r.status)}>{r.verdict ?? r.status}</Badge>
             </div>
           ))}
@@ -258,9 +258,9 @@ function SampleDialog({ set, page, index, grouped, view, updateView, href, onClo
   React.useEffect(() => { const c = cv.current; if (c && d) paint(c.getContext("2d", { willReadFrequently: true })!, 0, c.width, c.height, layers, keys, kinds, truth, pred, view); });
   const v = verdict(x), top = Math.max(0, ...calls.map((c) => Math.abs(c?.[2] ?? 0)));
   const arms = [...new Set(page.runs.map((r) => armOf(r.slug).arm))];
-  const line = (r: { slug: string }, c: Call) => (
+  const line = (r: { slug: string; logged: string }, c: Call) => (
     <tr key={r.slug} className="border-b last:border-0">
-      <td className="py-1 pr-3"><Link to={href(r.slug)} className="font-mono text-[11.5px] text-primary hover:underline">{r.slug}</Link></td>
+      <td className="py-1 pr-3"><Link to={href(r.slug)} className="font-mono text-[11.5px] text-primary hover:underline">{r.slug}</Link><div className="text-[10.5px] text-muted-foreground" title={when(r.logged)}>logged {ago(r.logged)}</div></td>
       <td className="py-1 pr-3">{c ? c[1] || "—" : <span className="text-muted-foreground">not logged</span>}</td>
       <td className="py-1 pr-3 font-mono text-[11.5px]">{c?.[2] != null && <span className="inline-flex items-center gap-2"><span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"><span className="block h-full bg-primary/70" style={{ width: `${top ? (Math.abs(c[2]) / top) * 100 : 0}%` }} /></span>{fmt(c[2])}</span>}</td>
       <td className="py-1 pr-3 font-mono text-[11.5px]">{c?.[3] != null && fmt(c[3])}</td>

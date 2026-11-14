@@ -17,8 +17,6 @@ NEGATIVES = {"negative", "background", "normal", "none", "ok", "good", "healthy"
 LAYER_KINDS = ("image", "audio", "mask", "heatmap")
 STATIC_STEP = -1  # layers that never change with training: the input image/audio and ground-truth masks
 MAX_ROWS = 5000
-SORTS = {"error": "r.error DESC", "score": "r.score DESC", "value": "r.value_true DESC",
-         "value_pred": "r.value_pred DESC", "sample": "i.sample ASC"}
 
 
 def outcome_for(truth: dict, pred: dict, negatives) -> str:
@@ -198,11 +196,13 @@ class Evals:
                 if sha is not None and not self.db.has_blob(str(sha)):
                     raise HubError(f"{row['sample']}: layer {name} refers to blob {str(sha)[:12]}… which was not uploaded")
         counts: dict[str, int] = {}
+        sample_changed = False
         with self.connect(write=True) as conn:
             run = self._writable(conn, actor, run_slug, allow_closed=True)
             set_id = self._set_id(conn, run["project"], eval_set, create=True)
             for row in parsed:
-                item, truth_prev = self._upsert_item(conn, set_id, row)
+                item, truth_prev, changed = self._upsert_item(conn, set_id, row)
+                sample_changed |= changed
                 truth = {**truth_prev, **row["truth"]}
                 if truth_prev.get("class") and row["truth"].get("class") and truth_prev["class"] != row["truth"]["class"]:
                     raise Conflict(f"{row['sample']} in {eval_set} is already labelled {truth_prev['class']!r}, not "
@@ -234,52 +234,65 @@ class Evals:
                         continue
                     conn.execute("INSERT OR REPLACE INTO eval_layers VALUES(?,?,?,?,?,?,?)",
                                  (run_slug, set_id, layer_step, item, name, sha, kind))
+            self._note_eval_write(conn, run_slug, set_id, step, epoch, sample_changed)
             conn.execute("UPDATE runs SET updated=? WHERE slug=?", (now(), run_slug))
             self._event(conn, actor["name"], "eval.log", f"run:{run_slug}",
                         f"{len(parsed)} samples of {eval_set} at step {step}", run["project"])
-        self._eval_changed(set_id, run_slug, step)
         return {"logged": len(parsed), "set": eval_set, "step": step, "outcomes": counts}
 
-    def _upsert_item(self, conn, set_id, row) -> tuple[int, dict]:
-        """Create or extend the shared sample facts; returns (item id, previously stored truth)."""
+    def _upsert_item(self, conn, set_id, row) -> tuple[int, dict, bool]:
+        """Create or extend the shared sample facts; returns (item id, previously stored truth, whether the sample
+        or one of its facts changed). Rows are written only when something changed."""
         existing = conn.execute("SELECT id, meta FROM eval_items WHERE set_id=? AND sample=?",
                                 (set_id, row["sample"])).fetchone()
         truth_keep = {k: v for k, v in row["truth"].items() if k != "boxes" or v}
+        image = row["layers"].get("image", (None,))[0]  # the same file for every run: kept on the sample
         if existing is None:
+            meta = {"truth": truth_keep, **row["meta"], **({"image": image} if image else {})}
             item = conn.execute("INSERT INTO eval_items(set_id, sample, meta) VALUES(?,?,?)",
-                                (set_id, row["sample"], json.dumps({"truth": truth_keep, **row["meta"]}))).lastrowid
-            prev = {}
+                                (set_id, row["sample"], json.dumps(meta))).lastrowid
+            prev, changed = {}, True
         else:
-            item = existing["id"]
-            meta = json.loads(existing["meta"])
-            prev = meta.get("truth", {})
-            meta["truth"] = {**prev, **truth_keep}
+            item, stored = existing["id"], json.loads(existing["meta"])
+            prev = stored.get("truth", {})
+            meta = {**stored, "truth": {**prev, **truth_keep}}
             if row["truth"].get("boxes") == []:  # an empty list says the sample has no boxes: forget the stored ones
                 meta["truth"].pop("boxes", None)
             meta.update(row["meta"])
-            conn.execute("UPDATE eval_items SET meta=? WHERE id=?", (json.dumps(meta), item))
+            if image:
+                meta["image"] = image
+            changed = meta != stored
+            if changed:
+                conn.execute("UPDATE eval_items SET meta=? WHERE id=?", (json.dumps(meta), item))
         for k in row["drop_facts"]:
-            conn.execute("DELETE FROM eval_facts WHERE item=? AND key=?", (item, k))
+            changed |= conn.execute("DELETE FROM eval_facts WHERE item=? AND key=?", (item, k)).rowcount > 0
         for k, v in row["facts"].items():
-            conn.execute("INSERT OR IGNORE INTO eval_facts VALUES(?,?,?)", (item, k, v[:200]))
-        return item, prev
+            changed |= conn.execute("INSERT OR IGNORE INTO eval_facts VALUES(?,?,?)", (item, k, v[:200])).rowcount > 0
+        return item, prev, changed
+
+    def _note_eval_write(self, conn, run_slug, set_id, step, epoch, sample_changed):
+        """Inside the write: refresh the checkpoint's counts and raise its version, and the set's when a sample changed."""
+        count, wrong = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(outcome NOT IN ('correct','unscored')), 0) FROM eval_results "
+            "WHERE run=? AND set_id=? AND step=?", (run_slug, set_id, step)).fetchone()
+        layered = conn.execute("SELECT COUNT(DISTINCT item) FROM eval_layers WHERE run=? AND set_id=? AND step=?",
+                               (run_slug, set_id, step)).fetchone()[0]
+        conn.execute(
+            "INSERT INTO eval_columns(run, set_id, step, epoch, rows, wrong, layered, version, logged) "
+            "VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(run, set_id, step) DO UPDATE SET epoch=COALESCE(excluded.epoch, epoch), "
+            "rows=excluded.rows, wrong=excluded.wrong, layered=excluded.layered, version=version+1, logged=excluded.logged",
+            (run_slug, set_id, step, epoch, count, wrong, layered, now()))
+        if sample_changed:
+            conn.execute("INSERT INTO eval_set_versions VALUES(?,1) ON CONFLICT(set_id) DO UPDATE SET version=version+1",
+                         (set_id,))
 
     # ---------------------------------------------------------------- reading
     def _eval_index(self, conn, run_slug) -> list[dict]:
         sets: dict[str, dict] = {}
-        for r in conn.execute(
-                "SELECT s.name, r.step, MAX(r.epoch) AS epoch, COUNT(*) AS n, "
-                "SUM(r.outcome NOT IN ('correct','unscored')) AS wrong FROM eval_results r JOIN eval_sets s ON s.id=r.set_id "
-                "WHERE r.run=? GROUP BY s.name, r.step ORDER BY s.name, r.step", (run_slug,)):
+        for r in conn.execute("SELECT s.name, c.step, c.epoch, c.rows, c.wrong, c.layered FROM eval_columns c "
+                              "JOIN eval_sets s ON s.id=c.set_id WHERE c.run=? ORDER BY s.name, c.step", (run_slug,)):
             sets.setdefault(r["name"], {"set": r["name"], "steps": []})["steps"].append(
-                {"step": r["step"], "epoch": r["epoch"], "samples": r["n"], "wrong": r["wrong"], "layered": 0})
-        if sets:
-            layered = {(r[0], r[1]): r[2] for r in conn.execute(
-                "SELECT s.name, l.step, COUNT(DISTINCT l.item) FROM eval_layers l JOIN eval_sets s ON s.id=l.set_id "
-                "WHERE l.run=? AND l.step>=0 GROUP BY s.name, l.step", (run_slug,))}
-            for s in sets.values():
-                for st in s["steps"]:
-                    st["layered"] = layered.get((s["set"], st["step"]), 0)
+                {"step": r["step"], "epoch": r["epoch"], "samples": r["rows"], "wrong": r["wrong"], "layered": r["layered"]})
         return list(sets.values())
 
     def _step_or_latest(self, conn, run_slug, set_id, step):
@@ -320,101 +333,6 @@ class Evals:
         for k in ("truth", "pred", "metrics"):
             r[k] = json.loads(r[k]) if r.get(k) else {}
         return r
-
-    def eval_query(self, run_slug, eval_set, step=None, filters=None, sort="error", limit=24, offset=0) -> dict:
-        """One page of samples at a checkpoint, filtered by facts, classes, outcome, value range, other runs."""
-        f = {k: v for k, v in (filters or {}).items() if v not in (None, "")}
-        with self.connect() as conn:
-            run = self._load_run(conn, run_slug)
-            set_id = self._set_id(conn, run["project"], eval_set)
-            step = self._step_or_latest(conn, run_slug, set_id, step)
-            joins, join_args = ["JOIN eval_items i ON i.id=r.item"], []
-            where, args = ["r.run=?", "r.set_id=?", "r.step=?"], [run_slug, set_id, step]
-            for key, col in (("class_true", "r.class_true"), ("class_pred", "r.class_pred"), ("outcome", "r.outcome")):
-                if key in f:
-                    values = str(f[key]).split(",")
-                    where.append(f"{col} IN ({','.join('?' * len(values))})")
-                    args += values
-            for n, (key, value) in enumerate((k[5:], v) for k, v in f.items() if k.startswith("fact.")):
-                if not FACT_KEY.fullmatch(key):
-                    raise HubError(f"bad fact filter {key!r}")
-                values = str(value).split(",")
-                joins.append(f"JOIN eval_facts f{n} ON f{n}.item=r.item AND f{n}.key=? AND f{n}.value IN "
-                             f"({','.join('?' * len(values))})")
-                join_args += [key, *values]
-            if "q" in f:
-                where.append("(i.sample LIKE ? OR EXISTS(SELECT 1 FROM eval_facts q WHERE q.item=r.item AND q.value LIKE ?))")
-                args += [f"%{f['q']}%"] * 2
-            if "value_min" in f:
-                where.append("r.value_true >= ?")
-                args.append(float(f["value_min"]))
-            if "value_max" in f:
-                where.append("r.value_true <= ?")
-                args.append(float(f["value_max"]))
-            if str(f.get("layered", "")).lower() in ("1", "true", "yes"):
-                where.append("EXISTS(SELECT 1 FROM eval_layers l WHERE l.run=r.run AND l.set_id=r.set_id "
-                             "AND l.item=r.item AND l.step=r.step)")
-            vs_cols = ""
-            if "vs" in f:
-                vs_step = self._step_or_latest(conn, f["vs"], set_id, f.get("vs_step"))
-                joins.append("JOIN eval_results v ON v.run=? AND v.set_id=r.set_id AND v.step=? AND v.item=r.item")
-                join_args += [f["vs"], vs_step]
-                vs_cols = ", v.class_pred AS vs_class_pred, v.outcome AS vs_outcome, v.error AS vs_error"
-                if "vs_outcome" in f:
-                    values = str(f["vs_outcome"]).split(",")
-                    where.append(f"v.outcome IN ({','.join('?' * len(values))})")
-                    args += values
-            order = SORTS.get(sort or "error", SORTS["error"])
-            base = f"FROM eval_results r {' '.join(joins)} WHERE {' AND '.join(where)}"
-            args = join_args + args
-            total = conn.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0]
-            out = rows(conn.execute(
-                f"SELECT r.item, i.sample, r.epoch, r.truth, r.pred, r.class_true, r.class_pred, r.value_true, "
-                f"r.value_pred, r.score, r.outcome, r.error, r.metrics{vs_cols} {base} ORDER BY {order} NULLS LAST, "
-                "i.sample LIMIT ? OFFSET ?", args + [min(max(int(limit), 1), 200), max(int(offset), 0)]))
-            layers = self._layers_for(conn, run_slug, set_id, [r["item"] for r in out], step)
-            facts = self._facts_for(conn, [r["item"] for r in out])
-            for r in out:
-                self._decode(r)
-                r["layers"], r["facts"] = layers[r["item"]], facts[r["item"]]
-            return {"set": eval_set, "step": step, "total": total, "rows": out}
-
-    def eval_facets(self, run_slug, eval_set, step=None) -> dict:
-        """Counts behind the filter controls: outcomes, classes, every fact key, and the confusion matrix."""
-        with self.connect() as conn:
-            run = self._load_run(conn, run_slug)
-            set_id = self._set_id(conn, run["project"], eval_set)
-            step = self._step_or_latest(conn, run_slug, set_id, step)
-            base = "FROM eval_results r WHERE r.run=? AND r.set_id=? AND r.step=?"
-            args = (run_slug, set_id, step)
-            out = {"set": eval_set, "step": step,
-                   "outcome": {r[0]: r[1] for r in conn.execute(f"SELECT r.outcome, COUNT(*) {base} GROUP BY 1", args)},
-                   "confusion": [list(r) for r in conn.execute(
-                       f"SELECT r.class_true, r.class_pred, COUNT(*) {base} AND r.class_true!='' GROUP BY 1, 2", args)],
-                   "class_true": [list(r) for r in conn.execute(
-                       f"SELECT r.class_true, COUNT(*), SUM(r.outcome NOT IN ('correct','unscored')) {base} "
-                       "AND r.class_true!='' GROUP BY 1 ORDER BY 2 DESC", args)],
-                   "class_pred": [list(r) for r in conn.execute(
-                       f"SELECT r.class_pred, COUNT(*), SUM(r.outcome NOT IN ('correct','unscored')) {base} "
-                       "AND r.class_pred!='' GROUP BY 1 ORDER BY 2 DESC", args)],
-                   "value_range": list(conn.execute(f"SELECT MIN(r.value_true), MAX(r.value_true) {base}", args).fetchone()),
-                   "kinds": {k: bool(conn.execute(f"SELECT 1 {base} AND {expr} LIMIT 1", args).fetchone())
-                             for k, expr in (("boxes", "(r.truth LIKE '%\"boxes\"%' OR r.pred LIKE '%\"boxes\"%')"),
-                                             ("text", "r.pred LIKE '%\"text\"%'"), ("value", "r.value_true IS NOT NULL"),
-                                             ("layers", "EXISTS(SELECT 1 FROM eval_layers l WHERE l.run=r.run AND "
-                                                        "l.set_id=r.set_id AND l.item=r.item AND l.step>=0)"))},
-                   "layers": self._layer_kinds(conn, run_slug, set_id), "facts": {}}
-            out["box_classes"] = [r[0] for r in conn.execute(  # labels of predicted boxes: one score filter each
-                "SELECT DISTINCT json_extract(b.value, '$[4]') FROM eval_results r, json_each(r.pred, '$.boxes') b "
-                "WHERE r.run=? AND r.set_id=? AND r.step=? AND json_extract(b.value, '$[4]') IS NOT NULL ORDER BY 1 "
-                "LIMIT 200", args)] if out["kinds"]["boxes"] else []
-            for key, in conn.execute("SELECT DISTINCT f.key FROM eval_facts f JOIN eval_items i ON i.id=f.item "
-                                     "WHERE i.set_id=? ORDER BY f.key", (set_id,)):
-                out["facts"][key] = [list(r) for r in conn.execute(
-                    "SELECT f.value, COUNT(*), SUM(r.outcome NOT IN ('correct','unscored')) FROM eval_results r "
-                    "JOIN eval_facts f ON f.item=r.item AND f.key=? WHERE r.run=? AND r.set_id=? AND r.step=? "
-                    "GROUP BY 1 ORDER BY 3 DESC, 2 DESC LIMIT 400", (key, *args))]
-            return out
 
     def eval_sample(self, run_slug, eval_set, sample) -> dict:
         """One sample across every checkpoint of a run: facts, truth, predictions and layers per step."""

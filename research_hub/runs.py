@@ -222,13 +222,12 @@ class Runs:
             conn.execute("DELETE FROM comments WHERE id=?", (comment,))
             conn.execute("DELETE FROM search WHERE ref=?", (f"comment:{comment}",))
         for table in ("run_topics", "run_notes", "metrics", "run_summary", "artifacts", "charts", "model_graphs",
-                      "eval_results", "eval_layers"):
+                      "eval_results", "eval_layers", "eval_columns"):
             conn.execute(f"DELETE FROM {table} WHERE run=?", (run_slug,))
         conn.execute("DELETE FROM links WHERE src=? OR dst=?", (ref, ref))
         conn.execute("DELETE FROM search WHERE ref=?", (ref,))
         conn.execute("UPDATE runs SET parent=NULL WHERE parent=?", (run_slug,))
         conn.execute("DELETE FROM runs WHERE slug=?", (run_slug,))
-        self._eval_forget(run_slug)
 
     def delete_run(self, actor, run_slug, confirm) -> dict:
         """Delete a run for good. Only a person may: the run's owner, or a project maintainer or owner."""
