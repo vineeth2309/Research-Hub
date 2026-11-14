@@ -107,11 +107,17 @@ class Datasets:
             if key in cache:
                 cache.move_to_end(key)
                 return cache[key]
-        value = build()
-        with _lock:
-            cache[key] = value
-            while len(cache) > KEPT:
-                cache.popitem(last=False)
+            gate = self.__dict__.setdefault("_dataset_building", {}).setdefault(key, threading.Lock())
+        with gate:  # requests for the same thing wait for the first one instead of each reading the disk
+            with _lock:
+                if key in cache:
+                    return cache[key]
+            value = build()
+            with _lock:
+                cache[key] = value
+                self._dataset_building.pop(key, None)
+                while len(cache) > KEPT:
+                    cache.popitem(last=False)
         return value
 
     # ---------------------------------------------------------------- loading

@@ -163,6 +163,7 @@ export default function Datasets() {
   if (sets.data && !sets.data.length) return <div className="space-y-5"><PageHeader title="Datasets" /><Empty title="No eval samples logged yet">Once runs log per-sample results with <code>run.log_eval(rows, step=…, eval_set=…)</code>, each eval set appears here with every run's call on every sample.</Empty></div>;
   const sm = summary.data, pg = rows.data, scored = !!sm?.scored;
   const order = pg?.runs.map((r) => r.slug) ?? slugs;
+  const stale = rows.isPlaceholderData;  // the filters changed and the matching page has not arrived yet
   const exportCsv = async () => {
     try {
       const all = await get<DatasetPage>("/api/eval-sets/samples", { ...query, sort, compact: 1, limit: 200000 });
@@ -219,12 +220,12 @@ export default function Datasets() {
       {ready && !pg && !rows.error && <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Spinner />Reading {slugs.length} runs on {info?.samples.toLocaleString()} samples…</div>}
       {pg && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted-foreground">
-          <span>{pg.total.toLocaleString()} matching sample{pg.total === 1 ? "" : "s"} · {slugs.length} run{slugs.length === 1 ? "" : "s"}</span>
+          <span className="inline-flex items-center gap-2">{stale ? <><Spinner />Updating…</> : `${pg.total.toLocaleString()} matching sample${pg.total === 1 ? "" : "s"} · ${slugs.length} run${slugs.length === 1 ? "" : "s"}`}</span>
           <span className="flex items-center gap-3">{scored ? <>{[["bg-success", "correct"], ["bg-danger", "missed or wrong"], ["bg-warning", "false alarm"]].map(([c, t]) => <span key={t} className="inline-flex items-center gap-1.5"><span className={cn("h-2.5 w-2.5 rounded-sm", c)} />{t}</span>)}</> : <span>colour is the predicted class</span>}<span>one cell per run</span></span>
         </div>
       )}
       {pg && (pg.rows.length ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+        <div className={cn("grid grid-cols-2 gap-3 transition-opacity sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6", stale && "opacity-40")}>
           {pg.rows.map((x, i) => { const v = verdict(x), extra = Object.entries(x.truth).find(([k, n]) => k !== "class" && typeof n === "number"); return (
             <button key={x.item} onClick={() => setOpen(i)} className="card overflow-hidden text-left transition-colors hover:border-primary/60 focus-ring">
               {x.image ? <img src={`/blobs/${x.image}`} alt="" loading="lazy" className="aspect-square w-full bg-muted object-cover" /> : <div className="grid aspect-square w-full place-content-center bg-muted text-[12px] text-muted-foreground">no image logged</div>}
