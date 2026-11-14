@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS eval_columns(run TEXT NOT NULL, set_id INTEGER NOT NU
     epoch INTEGER, rows INTEGER NOT NULL DEFAULT 0, wrong INTEGER NOT NULL DEFAULT 0, layered INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1, logged TEXT NOT NULL, PRIMARY KEY(run, set_id, step)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS eval_columns_set ON eval_columns(set_id, run, step);
+-- a person's review of a sample of an eval set (not of a run): appended, never edited; the newest per sample is current
+CREATE TABLE IF NOT EXISTS eval_reviews(id INTEGER PRIMARY KEY, set_id INTEGER NOT NULL, item INTEGER NOT NULL,
+    reviewer TEXT NOT NULL, created TEXT NOT NULL, cls TEXT NOT NULL DEFAULT '', severity REAL,
+    category TEXT NOT NULL DEFAULT '', difficulty TEXT NOT NULL DEFAULT '', bad_image INTEGER NOT NULL DEFAULT 0,
+    comment TEXT NOT NULL DEFAULT '', confirmed INTEGER NOT NULL DEFAULT 0, shown TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS eval_reviews_item ON eval_reviews(set_id, item, id);
 -- rises when a sample, its truth, its image or one of its facts changes
 CREATE TABLE IF NOT EXISTS eval_set_versions(set_id INTEGER PRIMARY KEY, version INTEGER NOT NULL);
 """

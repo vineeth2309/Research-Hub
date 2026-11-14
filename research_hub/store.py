@@ -11,11 +11,12 @@ from .datasets import Datasets
 from .designs import Designs, _words
 from .evals import Evals
 from .graphs import Graphs
+from .reviews import Reviews
 from .runs import Runs
 from .social import Social
 
 
-class Store(Core, Accounts, Runs, Charts, Graphs, Designs, Evals, Datasets, Social):
+class Store(Core, Accounts, Runs, Charts, Graphs, Designs, Evals, Datasets, Reviews, Social):
     def reindex(self) -> int:
         """Rebuild the full-text index from the tables."""
         n = 0

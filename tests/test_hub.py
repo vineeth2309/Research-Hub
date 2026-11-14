@@ -450,6 +450,75 @@ def test_one_eval_set_across_runs(site):
     assert [r["slug"] for s in hub.get("/api/eval-sets") if s["set"] == val for r in s["runs"]] == ["arm-s0", "base"]
 
 
+def test_people_review_the_samples_of_an_eval_set(site):
+    agent, person = site.agent("agent-r"), site.hub(site.ada.token, "research")
+    val = "parts@2.0:val"
+    truth = {"a": "crack", "b": "crack", "c": "normal", "d": "normal"}
+    calls = {"m1": {"a": "normal", "b": "crack", "c": "normal", "d": "crack"},
+             "m2": {"a": "crack", "b": "crack", "c": "normal", "d": "normal"}}
+    for slug, preds in calls.items():
+        run = hubclient.init(slug, project="research", title=slug, **{**STRICT, "parent": "none"}, hub=agent)
+        run.log_eval([{"sample": k, "true": {"class": truth[k]}, "pred": {"class": v}} for k, v in preds.items()],
+                     step=1, eval_set=val)
+
+    def review(sample, **fields):
+        return person.post("/api/eval-sets/review", {"set": val, "sample": sample, **fields})["review"]
+
+    def samples(**q):
+        return sorted(r["sample"] for r in agent.get("/api/eval-sets/samples", set=val, runs="m1,m2", **q)["rows"])
+    # people write, agents read; every field is checked
+    with denied("only people write reviews"):
+        agent.post("/api/eval-sets/review", {"set": val, "sample": "a", "class": "crack"})
+    for bad, why in (({"severity": 11}, "0 to 10"), ({"category": "nope"}, "category must be one of"),
+                     ({"difficulty": "hard"}, "difficulty must be one of")):
+        with denied(why):
+            review("a", **bad)
+    with denied("is not in"):
+        review("zzz", **{"class": "crack"})
+    shown = {"label": {"class": "crack", "severity": 4}, "runs": [{"slug": "m1", "class": "normal"}]}
+    review("a", **{"class": "crack", "severity": 3, "category": "critical defect", "difficulty": "tough", "shown": shown})
+    first = review("a", **{"class": "crack", "severity": 4.5, "category": "critical defect", "difficulty": "easy",
+                           "comment": "spatter on the edge", "confirmed": True, "shown": shown})
+    assert first["severity"] == 4.5 and first["reviewer"] == "ada" and first["confirmed"] and not first["bad_image"]
+    review("b", **{"class": "normal", "category": "graded defect"})
+    review("c", bad_image=True, comment="out of focus")
+    # the newest review is current and the earlier one stays as history, with what was on screen
+    current = agent.get("/api/eval-sets/reviews", set=val)
+    assert [(r["sample"], r["severity"]) for r in current["reviews"]] == [("a", 4.5), ("b", None), ("c", None)]
+    assert current["reviews"][0]["shown"] == shown and current["options"]["difficulties"] == ["easy", "borderline", "tough"]
+    history = agent.get("/api/eval-sets/reviews", set=val, history=1)["reviews"]
+    assert [(r["sample"], r["severity"]) for r in history if r["sample"] == "a"] == [("a", 3.0), ("a", 4.5)]
+    assert agent.get("/api/eval-sets/reviews", set=val, since="2999-01-01")["reviews"] == []
+    # the Datasets page filters on reviews and carries them on each sample
+    rows = {r["sample"]: r for r in agent.get("/api/eval-sets/samples", set=val, runs="m1,m2")["rows"]}
+    assert rows["a"]["review"]["comment"] == "spatter on the edge" and rows["d"]["review"] is None
+    assert samples(reviewed=0) == ["d"] and samples(reviewed=1) == ["a", "b", "c"] and samples(review_bad=1) == ["c"]
+    assert samples(review_class="crack") == ["a"] and samples(review_category="graded defect,critical defect") == ["a", "b"]
+    assert samples(review_difficulty="easy", review_by="ada", review_sev_min=4, review_sev_max=5) == ["a"]
+    assert samples(review_sev_min=5) == [] and samples(preset="split") == ["a", "d"] and samples(preset="split", reviewed=1) == ["a"]
+    # how each run stands against the reviews: a class that is negative means "not a defect"; bad images are left out
+    summary = agent.get("/api/eval-sets/summary", set=val, runs="m1,m2", review_class="crack")["reviews"]
+    assert (summary["total"], summary["reviewed"], summary["bad"]) == (4, 3, 1)  # the counts ignore the review filters
+    assert summary["by"]["class"] == [["crack", 1], ["normal", 1]] and summary["by"]["reviewer"] == [["ada", 3]]
+    assert summary["against"] == [{"agrees": 0, "false_call": 1, "miss": 1}, {"agrees": 1, "false_call": 1, "miss": 0}]
+    # an empty review takes the review back; the history keeps it
+    assert review("a") is None
+    assert [r["sample"] for r in agent.get("/api/eval-sets/reviews", set=val)["reviews"]] == ["b", "c"]
+    assert samples(reviewed=0) == ["a", "d"]
+    assert len([r for r in agent.get("/api/eval-sets/reviews", set=val, history=1)["reviews"] if r["sample"] == "a"]) == 3
+    # the project decides what a category or difficulty is called
+    person.request("PATCH", "/api/projects/research", {"settings": {**site.ada.get("/api/projects/research")["settings"],
+                   "review": {"categories": ["real", "fake"], "label_class_fact": "deployed"}}})
+    with denied("category must be one of"):
+        review("b", category="graded defect")
+    assert review("b", category="fake")["category"] == "fake"
+    options = agent.get("/api/eval-sets/summary", set=val, runs="m1,m2")["reviews"]["options"]
+    assert options["categories"] == ["real", "fake"] and options["label_class_fact"] == "deployed"
+    # agents read them from the command line, as a table for the sample list
+    assert cli(["--as", "agent-r", "--project", "research", "review", "list", "--set", val, "--csv"]) == 0
+    assert cli(["--as", "agent-r", "--project", "research", "review", "list", "--set", val]) == 0
+
+
 def test_plots_tables_and_system_metrics(site, monkeypatch):
     np = pytest.importorskip("numpy")
     from research_hub import plots

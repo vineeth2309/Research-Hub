@@ -205,40 +205,20 @@ are relative to the file).
 
 ### One eval set across runs
 
-When several runs log the same eval set with the same sample ids, **Datasets** in the sidebar shows the set
-itself: one tile per sample with a cell for every chosen run, coloured by its outcome. Each run is read at its
-last logged checkpoint.
+When several runs log the same eval set with the same sample ids, **Datasets** in the sidebar shows the set across
+runs, with presets for the samples most runs get wrong, filters, and a place for a person to review samples.
+Guide: [docs/datasets.md](datasets.md). What it needs from your logging:
 
-- Presets find the samples most runs get wrong, the ones every run gets wrong, the ones that split the runs, and
-  the ones only one run gets wrong or right. Filters are the true class and every fact of the set.
-- A sample's page lists every run's predicted class, score and outcome, and draws the masks or boxes of the run
-  you pick.
-- Runs named `<arm>-s<seed>…` are shown together as seeds of one arm. A selection of runs can be saved under a
-  name; it is kept in your browser.
-- Samples without truth work too: the runs are compared by the class they predict, and you can filter on how
-  many runs predict a class ("at most 3 runs say normal").
-- The mean and spread shown per sample are of one number in `pred`; when the rows carry several, you choose.
+- **The same eval set name and sample ids in every run.**
 - **A fact belongs to the sample and is shared by every run on the set; the first run to log it wins.** Put
-  anything that differs from run to run in `pred`, `metrics` or `outcome`, not in `facts`.
-- A finished run still takes rows logged with your own key, so a corrected outcome can be logged later with
-  `hub run eval` or `research_hub.client.log_eval`.
-- Each run shows when its results were last logged, in the run picker and the sample table; a correction on a
-  closed run updates it. Adding a sample, or adding or removing a fact, makes the set's sample list rebuild on the
-  next request (a few seconds on a large set), so keep facts stable and put per-run values in `pred` or `metrics`.
-
-The same data over the API, for building hard-case sets:
-
-```
-GET /api/eval-sets                                   # every eval set and the runs that logged it
-GET /api/eval-sets/samples?set=…&runs=a,b,c          # a page of samples with every run's call
-    &preset=most_wrong|all_wrong|split|all_right|one_wrong|one_right  &run=<the one run>
-    &class_true=…  &fact.<key>=v1,v2  &q=text  &pred_class=…&pred_min=…&pred_max=…
-    &sort=wrong|disagree|value|spread|score|pred|sample  &value=<number in pred>  &limit=…&offset=…
-    &compact=1                                       # aggregates only, up to 200,000 rows
-GET /api/eval-sets/summary?set=…&runs=…&by=<fact>    # counts per preset and filter value, run × run agreement
-```
-
-A call is `[outcome, predicted class, number, score]`, in the order of `runs` in the reply.
+  anything that differs from run to run in `pred`, `metrics` or `outcome`, not in `facts`, and keep facts stable.
+- **The page counts the `outcome` you log.** Log an operating-point verdict as `outcome` if that is what should
+  count; for sets without truth send no `outcome`.
+- Name seeds `<arm>-s<seed>…` so they group as one arm.
+- A finished run still takes rows logged with your own key, so a corrected outcome can be logged later at the
+  same step with `hub run eval` or `research_hub.client.log_eval`; only the fields you send change.
+- People's reviews of samples are read with `hub review list --set …` or `GET /api/eval-sets/reviews`; agents
+  never write them.
 
 ## Command line
 

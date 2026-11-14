@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .core import HubError, NotFound, now, number, rows
-from .evals import FACT_KEY, STATIC_STEP
+from .evals import FACT_KEY, NEGATIVES, STATIC_STEP
 
 VALUE_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 MAX_RUNS = 64
@@ -385,7 +385,27 @@ class Datasets:
                     "groups": {name: _mask(p, size) for name, p in groups.items()}}
         key = (set_id, "dataset", tuple(p[:3] for p in picked), value, size)
         data = self._summary_cache().get(key, lambda d: size * 400, build)
-        return {**data, "rec": rec, "columns": columns, "set_id": set_id, "runs": picked, "value": value, "values": values}
+        return {**data, "rec": rec, "columns": columns, "set_id": set_id, "runs": picked, "value": value, "values": values,
+                "reviews": self._review_state(conn, set_id, rec), "options": self._review_options(conn, project)}
+
+    @staticmethod
+    def _review_filter(d, f) -> int:
+        """The samples that pass the review filters: reviewed or not, bad image, class, category, difficulty, reviewer,
+        severity range. Several values of one filter are OR-ed."""
+        reviews, mask = d["reviews"], d["rec"]["all"]
+        if f.get("reviewed") in ("1", "0"):
+            mask &= reviews["reviewed"] if f["reviewed"] == "1" else ~reviews["reviewed"]
+        if f.get("review_bad") in ("1", "0"):
+            mask &= reviews["bad"] if f["review_bad"] == "1" else ~reviews["bad"]
+        for key, field in (("review_class", "class"), ("review_category", "category"), ("review_difficulty", "difficulty"),
+                           ("review_by", "reviewer")):
+            if f.get(key):
+                mask &= _any(reviews["fields"][field].get(v, 0) for v in str(f[key]).split(","))
+        low, high = number(f.get("review_sev_min"), "review_sev_min"), number(f.get("review_sev_max"), "review_sev_max")
+        if low is not None or high is not None:
+            mask &= _mask([p for p, v in reviews["severity"].items() if (low is None or v >= low) and (high is None or v <= high)],
+                          len(d["rec"]["ids"]))
+        return mask
 
     @staticmethod
     def _text_mask(rec, text) -> int:
@@ -407,6 +427,7 @@ class Datasets:
             mask &= _any(rec["class_true"].get(v, 0) for v in str(f["class_true"]).split(","))
         if f.get("q"):
             mask &= self._text_mask(rec, f["q"])
+        mask &= self._review_filter(d, f)
         preset = f.get("preset")
         if preset:
             if preset not in PRESETS:
@@ -455,13 +476,14 @@ class Datasets:
                    "runs": s.runs, "scored": s.scored, "wrong": s.wrong, "missed": s.missed, "false_alarm": s.false_alarm,
                    "disagree": round(s.disagree, 4), "value_mean": s.value_mean, "value_sd": s.value_sd,
                    "score_mean": s.score_mean, "classes": s.classes.most_common()}
+            row["review"] = d["reviews"]["by_pos"].get(p)
             if not compact:
                 row["image"] = rec["image"][p] or None
                 row["calls"] = [None if c["o"][p] < 0 else
                                 [c["oc"][c["o"][p]], c["cl"][c["c"][p]] if c["c"][p] >= 0 else "",
                                  c["n"][number][p] if number in c["n"] else None, c["s"][p]] for c in columns]
             out.append(row)
-        return {"set": eval_set, "value": number, "values": d["values"],
+        return {"set": eval_set, "value": number, "values": d["values"], "negatives": sorted(NEGATIVES),
                 "runs": [{"slug": p[0], "step": p[1], "logged": p[3]} for p in d["runs"]], "total": len(found), "rows": out}
 
     def dataset_summary(self, project, eval_set, slugs, filters=None, by=None, value=None) -> dict:
@@ -496,6 +518,8 @@ class Datasets:
                           if (both := (d["has"][a] & d["has"][b] & mask).bit_count()) else None
                           for b in range(n)] for a in range(n)]
         return {"set": eval_set, "value": d["value"], "values": d["values"], "samples": size,
+                "reviews": self._review_summary(d, self._dataset_filter(d, {k: v for k, v in f.items() if not k.startswith("review")
+                                                                           and k != "reviewed"})),
                 "runs": [{"slug": p[0], "step": p[1], "logged": p[3]} for p in d["runs"]],
                 "total": mask.bit_count(), "scored": scored.bit_count(),
                 "presets": {name: (mask & groups[name]).bit_count() for name in PRESETS},
@@ -504,6 +528,26 @@ class Datasets:
                 "class_pred": sorted(set().union(*(col["cl"] for col in d["columns"])) - {""}),
                 "facts": {k: counted(v) for k, v in sorted(rec["fact_masks"].items())},
                 "by": by, "groups": counted(rec["fact_masks"][by], mask, 12) if by else [], "agreement": agreement}
+
+    @staticmethod
+    def _review_summary(d, base) -> dict:
+        """Review counts among the samples that pass the filters other than the review ones, and how each run's call
+        stands against the reviews: a run agrees when it rejects what the reviewer found a defect and passes what was
+        found fine (its class is a negative class), makes a false call when it rejects a fine sample, a miss when it
+        passes a defect. Samples marked bad image or unsure are left out."""
+        reviews, size = d["reviews"], len(d["rec"]["ids"])
+        reviewed = base & reviews["reviewed"]
+        counts = {k: sorted(([v, (m & base).bit_count()] for v, m in vals.items() if m & base), key=lambda x: (-x[1], x[0]))
+                  for k, vals in reviews["fields"].items()}
+        scorable, fine = base & reviews["scorable"], base & reviews["negative"]
+        against = []
+        for col, has in zip(d["columns"], d["has"]):
+            passed = _mask([p for p, c in enumerate(col["c"]) if c >= 0 and col["cl"][c].lower() in NEGATIVES], size)
+            both = scorable & has
+            against.append({"agrees": (both & ((fine & passed) | (~fine & ~passed))).bit_count(),
+                            "false_call": (both & fine & ~passed).bit_count(), "miss": (both & ~fine & passed).bit_count()})
+        return {"options": d["options"], "total": base.bit_count(), "reviewed": reviewed.bit_count(),
+                "bad": (base & reviews["bad"]).bit_count(), "by": counts, "against": against}
 
     # ---------------------------------------------------------------- one run's Samples tab
     def _run_column(self, conn, run_slug, set_id, step):

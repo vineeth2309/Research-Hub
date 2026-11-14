@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import getpass
 import json
 import os
@@ -451,6 +452,23 @@ def cmd_run_eval(a, hub):
           + ", ".join(f"{k} {v}" for k, v in sorted(res["outcomes"].items())))
 
 
+def cmd_review_list(a, hub):
+    res = hub.get("/api/eval-sets/reviews", set=a.set, since=a.since, history="1" if a.history else None)
+    fields = ["sample", "class", "severity", "category", "difficulty", "bad_image", "comment", "reviewer", "created", "confirmed"]
+    if a.csv:
+        out = csv.DictWriter(sys.stdout, fields, extrasaction="ignore")
+        out.writeheader()
+        out.writerows(res["reviews"])
+    elif a.json:
+        _out(res)
+    else:
+        print(f"{res['set']}: {len(res['reviews'])} {'reviews' if a.history else 'reviewed samples'}")
+        for r in res["reviews"]:
+            print(f"  {r['sample'][:60]:60} {r['class'] or '-':16} sev {r['severity'] if r['severity'] is not None else '-':>4}  "
+                  f"{r['category'] or '-':14} {r['difficulty'] or '-':10} {'BAD IMAGE ' if r['bad_image'] else ''}"
+                  f"{r['reviewer']} {r['created'][:16]}  {r['comment'][:60]}")
+
+
 def cmd_run_evals(a, hub):
     sets = hub.get(f"/api/runs/{a.slug}")["eval_sets"]
     if a.json:
@@ -864,6 +882,15 @@ def build_parser():
     s.add_argument("--since", type=int, default=0)
     s.add_argument("--limit", type=int, default=100)
     s.set_defaults(fn=cmd_msg_read)
+    review = sub.add_parser("review", help="people's reviews of eval-set samples, written on the Datasets page"
+                            ).add_subparsers(dest="sub", required=True)
+    s = review.add_parser("list", help="the current review of every reviewed sample of an eval set (agents read, people write)")
+    s.add_argument("--set", required=True, help="eval set: dataset@version[:split]")
+    s.add_argument("--since", help="only reviews written after this time, e.g. 2026-11-14T12:00:00")
+    s.add_argument("--history", action="store_true", help="every review, not only the current one")
+    s.add_argument("--csv", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_review_list)
     sub.add_parser("mcp", help="serve the hub to an agent as MCP tools over stdio (for agents without a shell)"
                    ).set_defaults(fn=cmd_mcp)
     design = sub.add_parser("design", help="architecture boards: boxes, groups and arrows, with revisions and proposals")

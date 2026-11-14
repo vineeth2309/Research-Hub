@@ -39,6 +39,7 @@ can use it without a single agent.
 | **Designs** | Draw the architecture you want as boxes, groups and arrows. Every save is a revision; agents read the board as data, comment on a box, and propose changes that you accept or reject |
 | **Every sample** | Browse each evaluation image, mask, heatmap, box, text or audio clip; filter by any fact you attach; follow one sample across checkpoints |
 | **Every run on one sample** | The Datasets page shows an eval set across runs: which samples most runs get wrong, which split them, how far any two runs agree, with a CSV export |
+| **Reviews** | A person reviews the samples that matter, on the page, in a few keystrokes: class, severity 0 to 10, category, difficulty, bad image, comment. A review belongs to the sample, so every run, old and new, is scored against it |
 | **Collaboration** | Handbook, review comments with an inbox, research notes, chat with @mentions, claims so two agents do not do the same thing, and an MCP server for agents without a shell |
 | **Accounts and access** | Private projects, four roles, invite links, API keys, per-run tokens for training jobs, an audit log |
 | **System metrics** | Optional CPU, memory and GPU utilisation, memory, temperature and power |
@@ -135,6 +136,50 @@ run.watch(model)
 
 Details and limits: [docs/logging.md](docs/logging.md#model-architecture).
 
+## Datasets: every run on every sample
+
+When many runs are evaluated on the same data, the useful questions are about the samples. **Datasets** shows an
+eval set as one tile per sample, with a cell for every chosen run, so you can see at once which samples most
+models get wrong, which split them, and which ones every model passes with confidence.
+
+![The Datasets page: presets, filters, review filters and the summary panels](docs/images/datasets.png)
+
+- **One tile per sample:** the image, the true class, a coloured cell per run (correct, missed, false alarm), how
+  many runs are wrong, and the mean and spread of any number the runs predict, such as severity.
+- **One-click presets:** most runs wrong, every run wrong, runs split, every run right, and the samples where
+  exactly one run differs. Filters on the true class and on every fact you attach, text search, and "runs
+  predicting a class" (which also works for data without truth).
+- **Choose the runs:** filter by owner or verdict, save a selection under a name, group seeds of one arm. A new
+  run joins every view without any change on your side.
+- **Summary panels:** how many runs get each sample wrong, where in the data the runs fail, and how far any two
+  runs agree. **Export CSV** gives the filtered list with these aggregates.
+- **Nothing extra to log.** It reads the per-sample results your runs already send. Agents read the same data
+  with `GET /api/eval-sets/samples` for building hard-case lists.
+
+![A grid of samples: reviewed ones carry a badge, each strip shows every run's call](docs/images/dataset-grid.png)
+
+### Review the samples that matter
+
+Open a sample and review it, on the page, instead of in a spreadsheet:
+
+![A sample with its review: category, difficulty, class, severity, comment and each run against it](docs/images/dataset-review.png)
+
+- **Class** from the set's classes, **severity** from 0 to 10, **category** (critical defect, graded defect,
+  unsure), **difficulty** (easy, borderline, tough), a **bad image** checkbox that leaves the sample out of
+  scoring, and a **comment**.
+- **Keys:** `1` to `6` for category and difficulty, `b` bad image, `s` save, ← → save and move on. **Label is
+  right** (`y`) saves the sample's own label as your review and moves to the next, so confirming is one keystroke
+  and you edit only where you disagree.
+- **A review belongs to the sample, not to a run.** Every run on the set, today's and tomorrow's, is scored
+  against it: agrees, false call or miss, on the tile, in the sample table and as counts per run. Reviews are
+  append-only with history, record what was on screen, and never change labels or datasets.
+- **A review queue is a filter,** for example "Runs split" and "Not reviewed", with a counter of how much is
+  left. A new run refills it only with samples nobody has judged.
+- **Agents read, people write:** `hub review list --set … --csv`, `GET /api/eval-sets/reviews`, or the MCP
+  `reviews` tool.
+
+Details, keys, settings and the API: [docs/datasets.md](docs/datasets.md).
+
 ## Design the architecture together
 
 **Designs** are boards of boxes, groups and arrows for the architecture you want built, before anyone trains it.
@@ -230,6 +275,7 @@ already filled into the commands.
 - [docs/getting-started.md](docs/getting-started.md): install, first account, first project, first run, inviting people, roles
 - [docs/logging.md](docs/logging.md): runs, metrics, plots, tables, the model architecture view, per-sample results,
   system metrics, the CLI
+- [docs/datasets.md](docs/datasets.md): the Datasets page, reviews of samples, the API and CLI behind them, what to log
 - [docs/designs.md](docs/designs.md): architecture boards: drawing, revisions, how agents read and propose, reviewing
 - [docs/agents.md](docs/agents.md): connecting agents, the MCP server, the handbook, reviews and research rules
 - [docs/deploy.md](docs/deploy.md): running it for a team: HTTPS, Docker, systemd, backups, upgrades
@@ -251,12 +297,23 @@ cd web && npm ci && npm run build            # the dashboard (React, TypeScript,
 
 `research_hub/` is the app: `db.py` (schema, files), `core.py` (projects, handbook, inbox), `accounts.py`
 (sign-in, keys, roles), `runs.py`, `charts.py`, `evals.py`, `datasets.py` (packed summaries for the Datasets page), `social.py`, `server.py` (HTTP API and access rules),
-`graphs.py`, `client.py`, `plots.py` and `modelgraph.py` (the Python API), `system.py`, `mcp.py`, `cli.py`,
+`reviews.py` (people's reviews of samples), `graphs.py`, `client.py`, `plots.py` and `modelgraph.py` (the Python API), `system.py`, `mcp.py`, `cli.py`,
 `integrations/`. The built dashboard is
 committed, so the hub runs without Node.
 
 ## Changelog
 
+- **2026-11-14** Reviews on the Datasets page. A person reviews a sample with a class, a severity from 0 to 10, a
+  category (critical defect, graded defect, unsure), a difficulty (easy, borderline, tough), a bad-image checkbox
+  and a comment, in a few keystrokes; **Label is right** saves the sample's own label and moves on. A review
+  belongs to the eval set and sample, so every run is scored against it (agrees, false call, miss) on the tile, in
+  the sample table and in a per-run summary. Reviews are append-only with history and record what was on screen;
+  only people write them. Filters on review state, class, category, difficulty, reviewer and severity; review
+  columns in the CSV; `GET /api/eval-sets/reviews`, `hub review list` and an MCP tool for agents. Category and
+  difficulty names and the label of unlabelled samples are project settings. New guide: docs/datasets.md.
+- **2026-11-14** Fixes from a second pass over the packed summaries: a ground-truth mask logged with a later
+  checkpoint shows in the earlier checkpoints' filter counts, numbers that are not finite stay out of the
+  summaries, and the cleanup at start skips files still in use.
 - **2026-11-14** Datasets and Samples read small packed summaries instead of scanning every result row, so they
   open in about a second on a busy disk without keeping the database in memory. The summaries live in
   `summaries/` next to the database, are rebuilt on demand, and need no backup. Each run's list of checkpoints and

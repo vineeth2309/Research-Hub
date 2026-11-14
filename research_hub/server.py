@@ -259,6 +259,12 @@ class Api:
               "project", "viewer"),
             R("GET", "/api/eval-sets/summary", lambda c: s.dataset_summary(
                 c.project, c.q.get("set"), _csv(c.q.get("runs")), c.q, c.q.get("by"), c.q.get("value")), "project", "viewer"),
+            R("GET", "/api/eval-sets/reviews", lambda c: s.reviews_list(
+                c.project, c.q.get("set"), c.q.get("since"), c.q.get("history") == "1", int(c.q.get("limit", 100_000)),
+                c.q.get("sample")),
+              "project", "viewer"),
+            R("POST", "/api/eval-sets/review", lambda c: s.review_sample(
+                c.actor, c.project, c.body.get("set"), c.body.get("sample"), c.body), "project", "member"),
             R("GET", "/api/compare", lambda c: s.compare(_csv(c.q.get("runs"))), "runs", "viewer"),
             R("GET", "/api/compare/charts", lambda c: s.compare_charts(_csv(c.q.get("runs"))), "runs", "viewer"),
             R("GET", "/api/posts/([^/]+)", lambda c: s.get_post(c.m[0]), "post", "viewer"),

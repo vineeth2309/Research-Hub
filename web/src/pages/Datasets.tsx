@@ -1,5 +1,5 @@
 // One eval set across runs: a tile per sample with every chosen run's call, and where the runs agree or split.
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 import * as React from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -8,7 +8,8 @@ import { Pager } from "@/components/ui/data";
 import { PageHeader } from "@/components/ui/form";
 import { Dialog, Popover, toast } from "@/components/ui/overlays";
 import { Badge, Button, Card, Empty, Input, OUTCOME_LABEL, Spinner, statusTone, verdictTone, type Tone } from "@/components/ui/primitives";
-import { get, type Call, type DatasetPage, type DatasetRow, type DatasetRun, type DatasetSummary, type EvalSetInfo, type SampleDetail } from "@/lib/api";
+import { againstReview, reviewBadge, ReviewPanel } from "@/components/ReviewPanel";
+import { get, type Call, type DatasetPage, type DatasetRow, type DatasetRun, type DatasetSummary, type EvalSetInfo, type Review, type ReviewOptions, type SampleDetail } from "@/lib/api";
 import { useHub } from "@/lib/state";
 import { ago, cn, fmt, hashColor, pref, setPref, when } from "@/lib/utils";
 import { defaultView, layerColor, layerKeys, layerName, paint, swatch, visible, type View } from "./Samples";
@@ -132,6 +133,50 @@ function Summary({ s, slugs, by, onBy }: { s: DatasetSummary; slugs: string[]; b
   );
 }
 
+const REVIEW_FILTERS: [keyof DatasetSummary["reviews"]["by"], string, string][] = [["class", "review_class", "reviewed class"], ["category", "review_category", "category"], ["difficulty", "review_difficulty", "difficulty"], ["reviewer", "review_by", "reviewer"]];
+
+/** Filters on the reviews. The counts ignore these filters, so they say how much is left to review. */
+function ReviewFilters({ sm, f, setFilter }: { sm: DatasetSummary; f: Record<string, string>; setFilter: (k: string, v: string) => void }) {
+  const rv = sm.reviews, toggle = (k: string, v: string) => setFilter(k, f[k] === v ? "" : v);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="label mr-1 w-10">Review</span>
+      <Chip active={f.reviewed === "0"} onClick={() => toggle("reviewed", "0")}>Not reviewed <b>{(rv.total - rv.reviewed).toLocaleString()}</b></Chip>
+      <Chip active={f.reviewed === "1"} onClick={() => toggle("reviewed", "1")}>Reviewed <b>{rv.reviewed.toLocaleString()}</b></Chip>
+      {rv.bad > 0 && <Chip active={f.review_bad === "1"} onClick={() => toggle("review_bad", "1")}>Bad image <b>{rv.bad.toLocaleString()}</b></Chip>}
+      {REVIEW_FILTERS.map(([k, param, label]) => rv.by[k].length > 0 && <FacetFilter key={k} label={label} values={rv.by[k]} selected={list(f[param])} onChange={(v) => setFilter(param, v.join(","))} />)}
+      {rv.reviewed > 0 && (
+        <Popover className="w-64" trigger={<Chip active={!!(f.review_sev_min || f.review_sev_max)}>reviewed severity{f.review_sev_min || f.review_sev_max ? `: ${f.review_sev_min || 0} to ${f.review_sev_max || 10}` : ""}<ChevronDown className="h-3 w-3" /></Chip>}>
+          <div className="grid grid-cols-2 gap-2"><label className="space-y-1"><span className="label">at least</span><Input type="number" min={0} max={10} step={0.5} value={f.review_sev_min ?? ""} onChange={(e) => setFilter("review_sev_min", e.target.value)} placeholder="0" className="h-8" /></label><label className="space-y-1"><span className="label">at most</span><Input type="number" min={0} max={10} step={0.5} value={f.review_sev_max ?? ""} onChange={(e) => setFilter("review_sev_max", e.target.value)} placeholder="10" className="h-8" /></label></div>
+        </Popover>
+      )}
+      <span className="ml-auto text-[12.5px] text-muted-foreground"><b className="text-foreground">{rv.reviewed.toLocaleString()} of {rv.total.toLocaleString()}</b> reviewed in this filter</span>
+    </div>
+  );
+}
+
+/** How each run's call stands against the reviews: it agrees, makes a false call, or misses. */
+function Against({ s }: { s: DatasetSummary }) {
+  const rows = s.runs.map((r, i) => ({ slug: r.slug, ...s.reviews.against[i] }));
+  const most = Math.max(0, ...rows.map((r) => r.agrees + r.false_call + r.miss));
+  if (!most) return null;
+  return (
+    <Card className="p-3.5">
+      <div className="text-[13px] font-semibold">Runs against your reviews</div>
+      <p className="mb-2 mt-0.5 text-[12px] text-muted-foreground">A run agrees when it rejects what you found a defect and passes what you found fine. A false call rejects a sample you found fine; a miss passes a defect. Samples marked bad image or unsure are left out. Up to {most.toLocaleString()} reviewed samples per run.</p>
+      <div className="grid gap-x-6 gap-y-1 lg:grid-cols-2">
+        {rows.map((r) => { const n = r.agrees + r.false_call + r.miss; return (
+          <div key={r.slug} className="grid grid-cols-[minmax(0,13rem)_1fr_auto] items-center gap-2 text-[11.5px]">
+            <span className="truncate font-mono" title={r.slug}>{r.slug}</span>
+            <span className="flex h-2 overflow-hidden rounded-sm bg-muted" title={`${r.agrees} agree, ${r.false_call} false calls, ${r.miss} misses`}>{n > 0 && [["bg-success", r.agrees], ["bg-warning", r.false_call], ["bg-danger", r.miss]].map(([c, v]) => <span key={c as string} className={c as string} style={{ width: `${((v as number) / n) * 100}%` }} />)}</span>
+            <span className="font-mono text-muted-foreground">{r.agrees} / {r.false_call} / {r.miss}</span>
+          </div>
+        ); })}
+      </div>
+    </Card>
+  );
+}
+
 export default function Datasets() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
@@ -147,6 +192,9 @@ export default function Datasets() {
   const [grouped, setGrouped] = React.useState(() => pref("datasets.grouped", true));
   const [panels, setPanels] = React.useState(() => pref("datasets.summary", true));
   const [open, setOpen] = React.useState<number | null>(null);
+  const [snap, setSnap] = React.useState<DatasetPage | null>(null);  // the page as it was when a sample was opened: reviewing must not shuffle it
+  const [local, setLocal] = React.useState<Record<string, Review | null>>({});  // reviews written in this session, until the list is read again
+  const qc = useQueryClient();
   const [view, setView] = React.useState<View>(() => ({ ...defaultView, ...pref("samples.view", {}) }));
   const updateView = (v: Partial<View>) => setView((old) => { const next = { ...old, ...v }; setPref("samples.view", next); return next; });
   const slugs = React.useMemo(() => {
@@ -158,7 +206,8 @@ export default function Datasets() {
   const summary = useQuery({ queryKey: ["dataset-summary", hub.project, query, by], enabled: ready, placeholderData: keepPreviousData, queryFn: () => get<DatasetSummary>("/api/eval-sets/summary", { ...query, by }) });
   const rows = useQuery({ queryKey: ["dataset-samples", hub.project, query, sort, page], enabled: ready, placeholderData: keepPreviousData, queryFn: () => get<DatasetPage>("/api/eval-sets/samples", { ...query, sort, limit: PAGE, offset: page * PAGE }) });
   const setFilter = (k: string, v: string) => { setF((o) => { const n = { ...o }; if (v) n[k] = v; else delete n[k]; return n; }); setPage(0); };
-  const reset = () => { setF({}); setPage(0); setSort("wrong"); setValue(""); setBy(""); };
+  const reset = () => { setF({}); setPage(0); setSort("wrong"); setValue(""); setBy(""); setLocal({}); };
+  const closeDialog = () => { setOpen(null); setSnap(null); qc.invalidateQueries({ queryKey: ["dataset-samples"] }); qc.invalidateQueries({ queryKey: ["dataset-summary"] }); };
   if (!sets.data) return <div className="space-y-5"><PageHeader title="Datasets" />{sets.error ? <Empty title="The eval sets could not be loaded">{(sets.error as Error).message}. <button className="text-primary hover:underline" onClick={() => sets.refetch()}>Try again</button></Empty> : <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Spinner />Loading the eval sets…</div>}</div>;
   if (sets.data && !sets.data.length) return <div className="space-y-5"><PageHeader title="Datasets" /><Empty title="No eval samples logged yet">Once runs log per-sample results with <code>run.log_eval(rows, step=…, eval_set=…)</code>, each eval set appears here with every run's call on every sample.</Empty></div>;
   const sm = summary.data, pg = rows.data, scored = !!sm?.scored;
@@ -169,8 +218,8 @@ export default function Datasets() {
       const all = await get<DatasetPage>("/api/eval-sets/samples", { ...query, sort, compact: 1, limit: 200000 });
       const facts = [...new Set(all.rows.flatMap((r) => Object.keys(r.facts)))].sort();
       const cell = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-      const head = ["sample", "true_class", "runs", "scored", "wrong", "missed", "false_alarm", "disagreement", `${all.value || "value"}_mean`, `${all.value || "value"}_sd`, "score_mean", "top_class", "top_class_runs", ...facts];
-      const lines = all.rows.map((r) => [r.sample, r.truth.class, r.runs, r.scored, r.wrong, r.missed, r.false_alarm, r.disagree, r.value_mean, r.value_sd, r.score_mean, r.classes[0]?.[0], r.classes[0]?.[1], ...facts.map((k) => r.facts[k])].map(cell).join(","));
+      const head = ["sample", "true_class", "runs", "scored", "wrong", "missed", "false_alarm", "disagreement", `${all.value || "value"}_mean`, `${all.value || "value"}_sd`, "score_mean", "top_class", "top_class_runs", "review_class", "review_severity", "review_category", "review_difficulty", "review_bad_image", "review_comment", "reviewer", "reviewed_at", ...facts];
+      const lines = all.rows.map((r) => [r.sample, r.truth.class, r.runs, r.scored, r.wrong, r.missed, r.false_alarm, r.disagree, r.value_mean, r.value_sd, r.score_mean, r.classes[0]?.[0], r.classes[0]?.[1], r.review?.class, r.review?.severity, r.review?.category, r.review?.difficulty, r.review?.bad_image, r.review?.comment, r.review?.reviewer, r.review?.created, ...facts.map((k) => r.facts[k])].map(cell).join(","));
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([[head.join(","), ...lines].join("\n")], { type: "text/csv" }));
       a.download = `${set.replace(/[^A-Za-z0-9._-]+/g, "_")}.csv`; a.click(); URL.revokeObjectURL(a.href);
@@ -215,7 +264,8 @@ export default function Datasets() {
           {Object.keys(f).length > 0 && <button className="ml-1 inline-flex items-center gap-1 text-[12.5px] text-muted-foreground hover:text-foreground" onClick={reset}><X className="h-3 w-3" /> Clear all</button>}
         </div>
       )}
-      {sm && panels && <Summary s={sm} slugs={sm.runs.map((r) => r.slug)} by={sm.by ?? ""} onBy={setBy} />}
+      {sm && <ReviewFilters sm={sm} f={f} setFilter={setFilter} />}
+      {sm && panels && <><Summary s={sm} slugs={sm.runs.map((r) => r.slug)} by={sm.by ?? ""} onBy={setBy} /><Against s={sm} /></>}
       {(summary.error || rows.error) && <Empty title="This view could not be loaded">{((summary.error || rows.error) as Error).message}</Empty>}
       {ready && !pg && !rows.error && <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Spinner />Reading {slugs.length} runs on {info?.samples.toLocaleString()} samples…</div>}
       {pg && (
@@ -227,7 +277,8 @@ export default function Datasets() {
       {pg && (pg.rows.length ? (
         <div className={cn("grid grid-cols-2 gap-3 transition-opacity sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6", stale && "opacity-40")}>
           {pg.rows.map((x, i) => { const v = verdict(x), extra = Object.entries(x.truth).find(([k, n]) => k !== "class" && typeof n === "number"); return (
-            <button key={x.item} onClick={() => setOpen(i)} className="card overflow-hidden text-left transition-colors hover:border-primary/60 focus-ring">
+            <button key={x.item} onClick={() => { setSnap(pg); setOpen(i); }} className="card relative overflow-hidden text-left transition-colors hover:border-primary/60 focus-ring">
+              {(() => { const r = x.sample in local ? local[x.sample] : x.review; if (!r || !sm) return null; const b = reviewBadge(r, sm.reviews.options); return <span className="absolute right-1.5 top-1.5"><Badge tone={b.tone} dot className="shadow-card">{b.text}</Badge></span>; })()}
               {x.image ? <img src={`/blobs/${x.image}`} alt="" loading="lazy" className="aspect-square w-full bg-muted object-cover" /> : <div className="grid aspect-square w-full place-content-center bg-muted text-[12px] text-muted-foreground">no image logged</div>}
               <div className="space-y-1.5 px-2.5 py-2 text-[11.5px] leading-snug">
                 <div className="flex items-baseline justify-between gap-2"><span className="truncate text-[12.5px] font-semibold">{x.truth.class ?? "no truth"}</span><span className="max-w-[45%] shrink-0 truncate font-mono text-muted-foreground" title={x.sample}>{x.sample.split("/").pop()}</span></div>
@@ -240,13 +291,15 @@ export default function Datasets() {
         </div>
       ) : <Empty title="No samples match these filters" />)}
       <Pager page={page} total={pg?.total ?? 0} size={PAGE} onPage={setPage} />
-      {open != null && pg?.rows[open] && <SampleDialog set={set} page={pg} index={open} grouped={grouped} view={view} updateView={updateView} href={(slug) => hub.href(`runs/${slug}/samples`)} onClose={() => setOpen(null)} onIndex={setOpen} />}
+      {open != null && snap?.rows[open] && sm && <SampleDialog set={set} page={snap} index={open} grouped={grouped} view={view} updateView={updateView} href={(slug) => hub.href(`runs/${slug}/samples`)} onClose={closeDialog} onIndex={setOpen} options={sm.reviews.options}
+        classes={[...sm.class_true.map((c) => c[0]), ...sm.class_pred]} local={local} onReview={(sample, r) => setLocal((l) => ({ ...l, [sample]: r }))} />}
     </div>
   );
 }
 
-function SampleDialog({ set, page, index, grouped, view, updateView, href, onClose, onIndex }: { set: string; page: DatasetPage; index: number; grouped: boolean; view: View; updateView: (v: Partial<View>) => void; href: (slug: string) => string; onClose: () => void; onIndex: (i: number) => void }) {
+function SampleDialog({ set, page, index, grouped, view, updateView, href, onClose, onIndex, options, classes, local, onReview }: { set: string; page: DatasetPage; index: number; grouped: boolean; view: View; updateView: (v: Partial<View>) => void; href: (slug: string) => string; onClose: () => void; onIndex: (i: number) => void; options: ReviewOptions; classes: string[]; local: Record<string, Review | null>; onReview: (sample: string, r: Review | null) => void }) {
   const x = page.rows[index], calls = x.calls ?? [];
+  const review = x.sample in local ? local[x.sample] : x.review;
   const logged = page.runs.filter((_, i) => calls[i]);
   const [from, setFrom] = React.useState("");
   const run = logged.find((r) => r.slug === from) ?? logged[0];
@@ -264,7 +317,8 @@ function SampleDialog({ set, page, index, grouped, view, updateView, href, onClo
       <td className="py-1 pr-3">{c ? c[1] || "—" : <span className="text-muted-foreground">not logged</span>}</td>
       <td className="py-1 pr-3 font-mono text-[11.5px]">{c?.[2] != null && <span className="inline-flex items-center gap-2"><span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"><span className="block h-full bg-primary/70" style={{ width: `${top ? (Math.abs(c[2]) / top) * 100 : 0}%` }} /></span>{fmt(c[2])}</span>}</td>
       <td className="py-1 pr-3 font-mono text-[11.5px]">{c?.[3] != null && fmt(c[3])}</td>
-      <td className="py-1">{c && <span className="inline-flex items-center gap-1.5"><span className={cn("h-2 w-2 rounded-full", c[0] === "unscored" ? "bg-muted-foreground/50" : cellClass(c[0]))} />{OUTCOME_LABEL[c[0]] ?? c[0]}</span>}</td>
+      <td className="py-1 pr-3">{c && <span className="inline-flex items-center gap-1.5"><span className={cn("h-2 w-2 rounded-full", c[0] === "unscored" ? "bg-muted-foreground/50" : cellClass(c[0]))} />{OUTCOME_LABEL[c[0]] ?? c[0]}</span>}</td>
+      <td className="py-1">{(() => { const a = againstReview(review, c, page.negatives); return a && <Badge tone={a === "agrees" ? "success" : a === "miss" ? "danger" : "warning"}>{a}</Badge>; })()}</td>
     </tr>
   );
   return (
@@ -286,26 +340,27 @@ function SampleDialog({ set, page, index, grouped, view, updateView, href, onClo
           </dl>
         </div>
         <div className="min-w-0 space-y-3">
+          <ReviewPanel key={x.item} set={set} row={x} page={page} review={review} options={options} classes={classes} onSaved={(r) => onReview(x.sample, r)}
+            onMove={(d) => onIndex(Math.min(page.rows.length - 1, Math.max(0, index + d)))} canNext={index < page.rows.length - 1} atStart={index === 0} />
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={v.tone}>{v.text}</Badge>
             {x.value_mean != null && <Badge>{page.value} {fmt(x.value_mean)} ± {fmt(x.value_sd)}</Badge>}
             <Badge>disagreement {pct(x.disagree)}</Badge>
             <Badge>{x.classes.slice(0, 3).map(([c, n]) => `${c} ${n}`).join(" · ") || "no class predicted"}</Badge>
           </div>
-          <div className="max-h-[60vh] overflow-y-auto">
+          <div className="max-h-[42vh] overflow-y-auto">
             <table className="w-full text-[12.5px]">
-              <thead className="sticky top-0 bg-card"><tr className="border-b text-left">{["Run", "Predicted", page.value || "Number", "Score", "Outcome"].map((h) => <th key={h} className="label py-1.5 pr-3 font-semibold">{h}</th>)}</tr></thead>
+              <thead className="sticky top-0 bg-card"><tr className="border-b text-left">{["Run", "Predicted", page.value || "Number", "Score", "Outcome", "Against review"].map((h) => <th key={h} className="label py-1.5 pr-3 font-semibold">{h}</th>)}</tr></thead>
               <tbody>
                 {grouped ? arms.map((a) => { const mine = page.runs.map((r, i) => [r, calls[i]] as const).filter(([r]) => armOf(r.slug).arm === a); const right = mine.filter(([, c]) => c?.[0] === "correct").length; return (
                   <React.Fragment key={a}>
-                    {mine.length > 1 && <tr className="bg-muted/60"><td colSpan={5} className="px-1.5 py-1 text-[12px] font-semibold">{a} <span className="font-normal text-muted-foreground">· {mine.length} seeds{x.scored ? ` · ${right} right` : ""}</span></td></tr>}
+                    {mine.length > 1 && <tr className="bg-muted/60"><td colSpan={6} className="px-1.5 py-1 text-[12px] font-semibold">{a} <span className="font-normal text-muted-foreground">· {mine.length} seeds{x.scored ? ` · ${right} right` : ""}</span></td></tr>}
                     {mine.map(([r, c]) => line(r, c))}
                   </React.Fragment>
                 ); }) : page.runs.map((r, i) => line(r, calls[i]))}
               </tbody>
             </table>
           </div>
-          <div className="flex gap-2"><Button size="sm" variant="ghost" disabled={index === 0} onClick={() => onIndex(index - 1)}><ChevronLeft className="h-4 w-4" /> prev</Button><Button size="sm" variant="ghost" disabled={index >= page.rows.length - 1} onClick={() => onIndex(index + 1)}>next <ChevronRight className="h-4 w-4" /></Button></div>
         </div>
       </div>
     </Dialog>

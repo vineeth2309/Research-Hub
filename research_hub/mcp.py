@@ -60,6 +60,10 @@ TOOLS = {
                         sort=_s("error (default), -error, score, -score or sample"),
                         limit={"type": "integer", "description": "How many (default 20, at most 100)"},
                         offset={"type": "integer"})),
+    "reviews": ("People's reviews of the samples of an eval set: class, severity 0 to 10, category, difficulty, bad image, "
+                "comment, reviewer, time. Only people write them. Class Healthy means not a defect.",
+                _schema(["set"], set=_s("Eval set name"), since=_s("Only reviews written after this ISO time"),
+                        history={"type": "boolean", "description": "Every review, not only the current one"})),
     "sample_image": ("Look at one evaluation sample: its image and up to three of its mask or heatmap layers, with "
                      "what was true and what the run predicted.",
                      _schema(["run", "sample"], run=RUN, sample=_s("Sample id, from samples"),
@@ -146,6 +150,10 @@ def call(hub: Hub, name: str, a: dict) -> list[dict]:
         res = hub.get(f"/api/runs/{a['run']}/eval/samples", set=_eval_set(hub, a["run"], a.get("set")),
                       sort=a.get("sort", "error"), limit=min(int(a.get("limit", 20)), 100), **q)
         return [_text(_fmt_samples(res))]
+    if name == "reviews":
+        res = hub.get("/api/eval-sets/reviews", set=a["set"], since=a.get("since"), history="1" if a.get("history") else None)
+        return [_text({"set": res["set"], "options": res["options"], "reviews": res["reviews"][:200],
+                       "note": "cut at 200 reviews; use `hub review list --csv` for all" if len(res["reviews"]) > 200 else ""})]
     if name == "sample_image":
         eval_set = _eval_set(hub, a["run"], a.get("set"))
         s = hub.get(f"/api/runs/{a['run']}/eval/sample", set=eval_set, sample=a["sample"])

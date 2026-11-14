@@ -12,7 +12,7 @@ import { cn, pref } from "@/lib/utils";
 
 const FILES = import.meta.glob("../../../docs/*.md", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 // order of the guides, and who each is mainly for
-const GUIDES: [slug: string, audience: string][] = [["getting-started", "Start here"], ["logging", "Tracking"], ["designs", "Designs"], ["agents", "Agents"], ["deploy", "Admins"], ["security", "Admins"]];
+const GUIDES: [slug: string, audience: string][] = [["getting-started", "Start here"], ["logging", "Tracking"], ["datasets", "Tracking"], ["designs", "Designs"], ["agents", "Agents"], ["deploy", "Admins"], ["security", "Admins"]];
 const AUDIENCES = [...new Set(GUIDES.map((g) => g[1]))];
 
 interface Section { id: string; title: string; body: string }
