@@ -17,6 +17,7 @@ NEGATIVES = {"negative", "background", "normal", "none", "ok", "good", "healthy"
 LAYER_KINDS = ("image", "audio", "mask", "heatmap")
 STATIC_STEP = -1  # layers that never change with training: the input image/audio and ground-truth masks
 MAX_ROWS = 5000
+RIGHT = ('correct', 'unscored')  # outcomes that do not count as wrong
 
 
 def outcome_for(truth: dict, pred: dict, negatives) -> str:
@@ -197,6 +198,7 @@ class Evals:
                     raise HubError(f"{row['sample']}: layer {name} refers to blob {str(sha)[:12]}… which was not uploaded")
         counts: dict[str, int] = {}
         sample_changed = truth_layers = False
+        added = wrong_delta = 0
         with self.connect(write=True) as conn:
             run = self._writable(conn, actor, run_slug, allow_closed=True)
             set_id = self._set_id(conn, run["project"], eval_set, create=True)
@@ -222,6 +224,8 @@ class Evals:
                         error = float(fp + fn)
                 outcome = outcome or outcome_for(truth, pred, negatives)
                 counts[outcome] = counts.get(outcome, 0) + 1
+                added += prev is None
+                wrong_delta += (outcome not in RIGHT) - (prev is not None and prev["outcome"] not in RIGHT)
                 conn.execute(
                     "INSERT OR REPLACE INTO eval_results VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (run_slug, set_id, step, item, epoch, json.dumps(truth), json.dumps(pred), truth.get("class") or "",
@@ -235,7 +239,7 @@ class Evals:
                         continue
                     conn.execute("INSERT OR REPLACE INTO eval_layers VALUES(?,?,?,?,?,?,?)",
                                  (run_slug, set_id, layer_step, item, name, sha, kind))
-            self._note_eval_write(conn, run_slug, set_id, step, epoch, sample_changed, truth_layers)
+            self._note_eval_write(conn, run_slug, set_id, step, epoch, (added, wrong_delta), sample_changed, truth_layers)
             conn.execute("UPDATE runs SET updated=? WHERE slug=?", (now(), run_slug))
             self._event(conn, actor["name"], "eval.log", f"run:{run_slug}",
                         f"{len(parsed)} samples of {eval_set} at step {step}", run["project"])
@@ -271,18 +275,18 @@ class Evals:
             changed |= conn.execute("INSERT OR IGNORE INTO eval_facts VALUES(?,?,?)", (item, k, v[:200])).rowcount > 0
         return item, prev, changed
 
-    def _note_eval_write(self, conn, run_slug, set_id, step, epoch, sample_changed, truth_layers):
-        """Inside the write: refresh the checkpoint's counts and raise its version, and the set's when a sample changed.
-        A ground-truth layer shows at every checkpoint of the run, so writing one raises them all."""
-        count, wrong = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(outcome NOT IN ('correct','unscored')), 0) FROM eval_results "
-            "WHERE run=? AND set_id=? AND step=?", (run_slug, set_id, step)).fetchone()
+    def _note_eval_write(self, conn, run_slug, set_id, step, epoch, change, sample_changed, truth_layers):
+        """Inside the write: add this chunk's change (rows added, wrong calls gained) to the checkpoint's counts and
+        raise its version, and the set's when a sample changed. Counting the stored rows instead would read the
+        whole checkpoint again for every chunk. A ground-truth layer shows at every checkpoint of the run, so
+        writing one raises them all."""
+        count, wrong = change
         layered = conn.execute("SELECT COUNT(DISTINCT item) FROM eval_layers WHERE run=? AND set_id=? AND step=?",
                                (run_slug, set_id, step)).fetchone()[0]
         conn.execute(
             "INSERT INTO eval_columns(run, set_id, step, epoch, rows, wrong, layered, version, logged) "
             "VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(run, set_id, step) DO UPDATE SET epoch=COALESCE(excluded.epoch, epoch), "
-            "rows=excluded.rows, wrong=excluded.wrong, layered=excluded.layered, version=version+1, logged=excluded.logged",
+            "rows=rows+excluded.rows, wrong=wrong+excluded.wrong, layered=excluded.layered, version=version+1, logged=excluded.logged",
             (run_slug, set_id, step, epoch, count, wrong, layered, now()))
         if truth_layers:
             conn.execute("UPDATE eval_columns SET version=version+1 WHERE run=? AND set_id=? AND step!=?",
