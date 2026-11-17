@@ -529,12 +529,14 @@ def bootstrap(store: Store) -> None:
         print(f"[hub] created the project {project}", flush=True)
 
 
-def _index_eval_results(store):
-    """After an upgrade, pack earlier eval results for the Datasets page; no-op once it is done."""
-    try:
-        store.eval_backfill()
-    except Exception as e:  # a background job must not take the hub down; it resumes at the next start
-        print(f"[hub] indexing eval results failed: {e!r}", flush=True)
+def _index_after_upgrade(store):
+    """After an upgrade, index what the pages read so they need no scans: runs' last steps, then the eval results
+    of the Datasets page. Each is a no-op once done."""
+    for job in (store.fill_run_steps, store.eval_backfill):
+        try:
+            job()
+        except Exception as e:  # a background job must not take the hub down; it resumes at the next start
+            print(f"[hub] {job.__name__} failed: {e!r}", flush=True)
 
 
 def serve(home, host="127.0.0.1", port=6230, public_url=None):
@@ -547,7 +549,7 @@ def serve(home, host="127.0.0.1", port=6230, public_url=None):
     httpd = ThreadingHTTPServer((host, port), make_handler(api, trust_proxy=behind_proxy))
     base = (public_url or f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}").rstrip("/")
     print(f"[hub] serving {store.db.home} on {host}:{port}", flush=True)
-    threading.Thread(target=_index_eval_results, args=(store,), daemon=True).start()
+    threading.Thread(target=_index_after_upgrade, args=(store,), daemon=True).start()
     if api.setup_code:
         print(f"[hub] first run: create the admin account at\n      {base}/#/setup?code={api.setup_code}", flush=True)
     try:

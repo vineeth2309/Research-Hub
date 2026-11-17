@@ -303,6 +303,10 @@ committed, so the hub runs without Node.
 
 ## Changelog
 
+- **2026-11-17** Faster run list and large uploads on a busy disk. The run list read every metric row of every run
+  to find its last step (minutes on a cold disk); the last step is now kept per run as metrics arrive and filled
+  in for older runs in the background at the first start. Each chunk of a per-sample eval upload adds to the
+  checkpoint's counts instead of recounting the whole checkpoint.
 - **2026-11-14** Reviews on the Datasets page. A person reviews a sample with a class, a severity from 0 to 10, a
   category (critical defect, graded defect, unsure), a difficulty (easy, borderline, tough), a bad-image checkbox
   and a comment, in a few keystrokes; **Label is right** saves the sample's own label and moves on. A review

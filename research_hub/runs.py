@@ -222,7 +222,7 @@ class Runs:
             conn.execute("DELETE FROM comments WHERE id=?", (comment,))
             conn.execute("DELETE FROM search WHERE ref=?", (f"comment:{comment}",))
         for table in ("run_topics", "run_notes", "metrics", "run_summary", "artifacts", "charts", "model_graphs",
-                      "eval_results", "eval_layers", "eval_columns"):
+                      "eval_results", "eval_layers", "eval_columns", "run_steps"):
             conn.execute(f"DELETE FROM {table} WHERE run=?", (run_slug,))
         conn.execute("DELETE FROM links WHERE src=? OR dst=?", (ref, ref))
         conn.execute("DELETE FROM search WHERE ref=?", (ref,))
@@ -262,9 +262,27 @@ class Runs:
         with self.connect(write=True) as conn:
             self._writable(conn, actor, run_slug)
             conn.executemany("INSERT OR REPLACE INTO metrics VALUES(?,?,?,?,?)", out)
+            last = max((p[2] for p in out if not p[1].startswith("system/")), default=None)  # system metrics count seconds
+            if last is not None:
+                conn.execute("INSERT INTO run_steps VALUES(?,?) ON CONFLICT(run) DO UPDATE SET "
+                             "last_step=MAX(last_step, excluded.last_step)", (run_slug, last))
             conn.execute("UPDATE runs SET updated=?, status=CASE WHEN status='planned' THEN 'running' ELSE status END,"
                          " started=CASE WHEN started='' THEN ? ELSE started END WHERE slug=?", (ts, ts, run_slug))
         return len(out)
+
+    def fill_run_steps(self):
+        """After an upgrade: the last training step of runs that logged metrics before run_steps existed, newest first
+        and one run at a time so a busy disk is never held. Nothing to do once every run is in."""
+        with self.connect() as conn:
+            todo = [r[0] for r in conn.execute("SELECT slug FROM runs WHERE slug NOT IN (SELECT run FROM run_steps) "
+                                               "ORDER BY updated DESC")]
+        for name in todo:
+            with self.connect() as conn:
+                last = conn.execute("SELECT MAX(step) FROM metrics WHERE run=? AND key NOT LIKE 'system/%'", (name,)).fetchone()[0]
+            if last is not None:  # a run still without metrics is looked at again at the next start
+                with self.connect(write=True) as conn:
+                    conn.execute("INSERT INTO run_steps VALUES(?,?) ON CONFLICT(run) DO UPDATE SET "
+                                 "last_step=MAX(last_step, excluded.last_step)", (name, last))
 
     def set_summary(self, actor, run_slug, values: dict) -> dict:
         if not isinstance(values, dict) or not values:
@@ -335,9 +353,8 @@ class Runs:
                 m["parent_value"] = parent.get(m["key"])
         run["metric_keys"] = [r[0] for r in conn.execute("SELECT DISTINCT key FROM metrics WHERE run=? ORDER BY key",
                                                          (run_slug,))]
-        last = conn.execute("SELECT MAX(step) FROM metrics WHERE run=? AND key NOT LIKE 'system/%'",
-                            (run_slug,)).fetchone()[0]  # system metrics count seconds, not training steps
-        run["last_step"] = last
+        last = conn.execute("SELECT last_step FROM run_steps WHERE run=?", (run_slug,)).fetchone()
+        run["last_step"] = last[0] if last else None
         run["charts"] = conn.execute("SELECT COUNT(DISTINCT name) FROM charts WHERE run=?", (run_slug,)).fetchone()[0]
         run["model_graphs"] = rows(conn.execute("SELECT name, n_nodes, params FROM model_graphs WHERE run=? ORDER BY name",
                                                 (run_slug,)))
@@ -383,7 +400,7 @@ class Runs:
                 "r.parent,r.dataset,r.created,r.started,r.ended,r.updated,"
                 "(SELECT COUNT(*) FROM comments c WHERE c.target='run:'||r.slug AND c.status='open' AND c.parent_id IS NULL"
                 " AND c.author!=r.owner) AS open_comments,"
-                "(SELECT MAX(step) FROM metrics m WHERE m.run=r.slug AND m.key NOT LIKE 'system/%') AS last_step "
+                "(SELECT last_step FROM run_steps s WHERE s.run=r.slug) AS last_step "
                 f"FROM runs r WHERE {where} ORDER BY {STATUS_ORDER}, r.updated DESC LIMIT ? OFFSET ?",
                 args + [min(int(limit), 500), max(int(offset), 0)]))
             return {"runs": out, "total": total}

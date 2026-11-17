@@ -245,6 +245,13 @@ def test_plain_tracking_and_research_rules(site, capsys):
     resumed = hubclient.init("yolo-s", resume=True, hub=site.hub(job.ingest_token))
     resumed.log({"train/loss": 0.2}, step=10)
     assert agent.get("/api/runs/yolo-s")["last_step"] == 10
+    listed = lambda: {r["slug"]: r["last_step"] for r in agent.get("/api/runs?project=detectors")["runs"]}  # noqa: E731
+    assert listed()["yolo-s"] == 10
+    with site.store.connect(write=True) as conn:  # runs from before run_steps existed are filled in afterwards
+        conn.execute("DELETE FROM run_steps")
+    assert listed()["yolo-s"] is None
+    site.store.fill_run_steps()
+    assert listed()["yolo-s"] == 10
 
     # the research project is strict: agents must state why; the verdict gate applies
     with denied("requires"):
